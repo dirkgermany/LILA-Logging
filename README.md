@@ -36,29 +36,30 @@ simpleOraLogger monitors different informations about your processes.
 * Call stack (depends to log level)
 
 ## Demo
-You should use a 'global' variable to store the process id (better: logging).
 ```sql
-   -- global process ID related to your logging process
-   gProcessId number(19,0);
-```
-At first in your 'main' routine begin the log session
-```sql
-   -- begin a new logging session
-   gProcessId := simpleOraLogger.new_session('my application', simpleOraLogger.logLevelWarn, 30);
-```
-Write log entries wherever you want
-```sql
-   -- e.g. simple informations
-   simpleOraLogger.info(gProcessId, 'Something happened or not');
-   -- e.g. informations when an exception was raised
-   simpleOraLogger.error(gProcessId, 'I made a fault');
+procedure MY_DEMO_PROC
+as
+  -- global process ID related to your logging process
+  gProcessId number(19,0);
 
-   -- also you can change the status during your process runs
-   simpleOraLogger.set_process_status(1, 'DONE');
-```
-At last action end the logging session
-```sql
+begin
+  -- begin a new logging session
+  -- the last parameter refers to killing log entries which are older than the given number of days
+  -- if this param is NULL, no log entry will be deleted
+  gProcessId := simpleOraLogger.new_session('my application', simpleOraLogger.logLevelWarn, 30);
+
+  -- write a log entry whenever you want
+  simpleOraLogger.info(gProcessId, 'Something happened or not');
+  -- e.g. informations when an exception was raised
+  simpleOraLogger.error(gProcessId, 'I made a fault');
+
+  -- also you can change the status during your process runs
+  simpleOraLogger.set_process_status(1, 'DONE');
+
+  -- last but not least end the logging session
   -- opional you can set the numbers of steps to do and steps done 
   simpleOraLogger.close_session(gProcessId, 100, 99, 'DONE', 1);
+
+end MY_DEMO_PROC;
 ```
 
