@@ -116,7 +116,7 @@ Ends a logging session with optional final informations.
 ```sql
 -- Syntax
 ---------
-PROCEDURE CLOSE_SESSION(p_processId number, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status number)
+PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_stepsToDo NUMBER, p_stepsDone NUMBER, p_processInfo VARCHAR2, p_status NUMBER)
 
 -- Usage
 --------
@@ -140,13 +140,32 @@ The status of the process can be set using the following two variants:
 | p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
 | p_status | NUMBER | Current status of the process (freely selected by the calling package) | [`M`](#m)
 
-*Variant 2 with additional info as text*
+*Option 2 with additional info as text*
 | Parameter | Type | Description | Required
 | --------- | ---- | ----------- | -------
 | p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
 | p_status | NUMBER | Current status of the process (freely selected by the calling package) | [`M`](#m)
 | p_processInfo | VARCHAR2 | Current information about the process (e.g., a readable status) | [`M`](#m)
-      
+
+**Syntax and Examples**
+```sql
+-- Syntax
+---------
+-- Option 1
+PROCEDURE SET_PROCESS_STATUS(p_processId NUMBER, p_status NUMBER)
+-- Option 2
+PROCEDURE SET_PROCESS_STATUS(p_processId NUMBER, p_status NUMBER, p_processInfo VARCHAR2)
+
+-- Usage
+--------
+-- assuming that gProcessId is the global stored process ID
+
+-- close without informations about process steps
+so_log.set_process_status(gProcessId, 1);
+-- close with additional informations about steps
+so_log.set_process_status(gProcessId, 1, 'OK');
+```
+
     
     ------------------
     -- Logging details
@@ -177,11 +196,4 @@ The status of the process can be set using the following two variants:
 The NEW_SESSION function starts and the CLOSE_SESSION method ends a LOG session.
 
 Calling both is important to ensure correct logging.
-Regardless of this, logging is also possible without CLOSE_SESSION, for example, if the calling process is terminated prematurely or unexpectedly due to an error.    
-
-    ----------
-    -- Testing
-    ----------
-    -- feel free
-    procedure insertProcess (p_tabName varchar2, p_processId number, p_logLevel number);
-    function test(p_processId number) return varchar2;
+Regardless of this, logging is also possible without CLOSE_SESSION, for example, if the calling process is terminated prematurely or unexpectedly due to an error. 
