@@ -61,11 +61,16 @@ logLevelDebug   constant number := 8;
 ```
     
 ## Functions and Procedures
+Shortcuts for parameter requirement:
+* <a id="M"> Mandatory</a>
+* <a id="O"> Optional</a>
+* <a id="N"> Nullable</a>
+
 | Name               | Type      | Description                         | Scope
 | ------------------ | --------- | ----------------------------------- | -------
-| [`NEW_SESSION`](#function-new_session) | Function  | Opens a new log session             | Log Session
-| CLOSE_SESSION      | Procedure | Ends a log session                  | Log Session
-| SET_PROCESS_STATUS | Procedure | Sets the state of the log status    | Log Session
+| [`NEW_SESSION`](#function-new_session) | Function  | Opens a new log session | Log Session
+| CLOSE_SESSION      | Procedure | Ends a log session                  | Log Session, Session Handling
+| SET_PROCESS_STATUS | Procedure | Sets the state of the log status    | Log Session, Session Handling
 | INFO               | Procedure | Writes INFO log entry               | Detail Logging
 | DEBUG              | Procedure | Writes DEBUG log entry              | Detail Logging
 | WARN               | Procedure | Writes WARN log entry               | Detail Logging
@@ -77,49 +82,62 @@ logLevelDebug   constant number := 8;
     procedure WARN(p_processId number, p_stepInfo varchar2);
     procedure ERROR(p_processId number, p_stepInfo varchar2);
     
-### Session Handling
-Shortcuts for parameter requirement:
-* <a id="M"> Mandatory</a>
-* <a id="O"> Optional</a>
-* <a id="N"> Nullable</a>
-
-#### Function NEW_SESSION
+### Function NEW_SESSION
 The NEW_SESSION function starts the logging session for a process.
 | Parameter | Type | Description | Required
 | --------- | ---- | ----------- | -------
 | p_processName | VARCHAR2| freely selectable name for identifying the process; is written to table ‘1’ | [`M`](#m)
 | p_logLevel | NUMBER | determines the level of detail in table ‘2’ (see above) | [`M`](#m)
-| p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`N`](#m)
-| p_tabNamePrefix | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#m)
+| p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`N`](#n)
+| p_tabNamePrefix | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#o)
 
 **Returns**
 Type: NUMBER
 Description: The new process ID; this ID is required for subsequent calls in order to be able to assign the LOG calls to the process
 
-**Syntax and Example**
+**Syntax and Examples**
 ```sql
 -- Syntax
-NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToKeep NUMBER, p_tabNamePrefix VARCHAR2 DEFAULT 'LOG_PROCESS')
+---------
+FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToKeep NUMBER, p_tabNamePrefix VARCHAR2 DEFAULT 'LOG_PROCESS')
 
 -- Usage
-
+--------
 -- No deletion of old entries, log table name is 'LOG_PROCESS'
-gProcessId := SO_LOG.new_session('my application', SO_LOG.logLevelWarn, null);
-
+gProcessId := so_log.new_session('my application', so_log.logLevelWarn, null);
 -- keep entries which are not older than 30 days
-gProcessId := SO_LOG.new_session('my application', SO_LOG.logLevelWarn, 30);
-
+gProcessId := so_log.new_session('my application', so_log.logLevelWarn, 30);
 -- use another log table name
-gProcessId := SO_LOG.new_session('my application', SO_LOG.logLevelWarn, null, 'MY_LOG_TABLE');
-```      
-    procedure CLOSE_SESSION(p_processId number, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status number);
-      -- (m) p_processId     : ID of the process to which the session applies
-      -- (n) p_stepsToDo     : Number of work steps that would have been necessary for complete processing
-      --                       This value must be managed by the calling package
-      -- (n) p_stepsDone     : Number of work steps that were actually processed
-      --                       This value must be managed by the calling package
-      -- (n) p_processInfo   : Final information about the process (e.g., a readable status)
-      -- (n) p_status        : Final status of the process (freely selected by the calling package)
+gProcessId := so_log.new_session('my application', so_log.logLevelWarn, null, 'MY_LOG_TABLE');
+```
+
+### Procedure CLOSE_SESSION
+Ends a logging session with optional final informations.
+
+| Parameter | Type | Description | Required
+| --------- | ---- | ----------- | -------
+| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
+| p_stepsToDo | NUMBER | Number of work steps that would have been necessary for complete processing. This value must be managed by the calling package | [`N`](#n)
+| p_stepsDone | NUMBER | Number of work steps that were actually processed. This value must be managed by the calling package | [`N`](#n)
+| p_processInfo | VARCHAR2 | Final information about the process (e.g., a readable status) | [`N`](#n)
+| p_status | NUMBER | Final status of the process (freely selected by the calling package) | [`N`](#m)
+
+**Syntax and Examples**
+```sql
+-- Syntax
+---------
+PROCEDURE CLOSE_SESSION(p_processId number, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status number)
+
+-- Usage
+--------
+-- assuming that gProcessId is the global stored process ID
+
+-- close without informations about process steps
+so_log.close_session(gProcessId, null, null, 'Success', 1);
+-- close with additional informations about steps
+so_log.close_session(gProcessId, 100, 99, 'Problem', 2);
+```
+
 
 ### Life Cycle of a LOG SESSION
 The NEW_SESSION function starts and the CLOSE_SESSION method ends a LOG session.
