@@ -50,3 +50,94 @@ To do this, the selected log level must be >= the level implied in the logging c
 >logLevelInfo   -> Calls to the INFO(), WARN(), and ERROR() procedures are taken into account
 >
 >logLevelDebug  -> Calls to the DEBUG(), INFO(), WARN(), and ERROR() procedures are taken into account
+
+### Declaration of Log Levels
+```sql
+logLevelSilent  constant number := 0;
+logLevelError   constant number := 1;
+logLevelWarn    constant number := 2;
+logLevelInfo    constant number := 4;
+logLevelDebug   constant number := 8;
+```
+    
+## Functions and Procedures
+
+    -- (m) = mandatory
+    -- (o) = optional
+    -- (n) = NULL is allowed
+    
+
+```sql    
+function  NEW_SESSION(p_processName varchar2, p_logLevel number, p_daysToKeep number, p_tabNamePrefix varchar2 default 'log_process') return number;
+-- (m) p_processName   : freely selectable name for identifying the process; is written to table ‘1’
+-- (m) p_logLevel      : determines the level of detail in table ‘2’ (see above)
+-- (n) p_daysToKeep    : max. age of entries in days; if not NULL, all entries older than p_daysToKeep
+--                       and whose process name = p_processName (not case sensitive) are deleted
+-- (o) p_tabNamePrefix : optional prefix of the LOG table names (see above)
+--
+-- return number       : the process ID; this ID is required for subsequent calls in order to be able to assign the LOG calls to the process
+```      
+    procedure CLOSE_SESSION(p_processId number, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status number);
+      -- (m) p_processId     : ID of the process to which the session applies
+      -- (n) p_stepsToDo     : Number of work steps that would have been necessary for complete processing
+      --                       This value must be managed by the calling package
+      -- (n) p_stepsDone     : Number of work steps that were actually processed
+      --                       This value must be managed by the calling package
+      -- (n) p_processInfo   : Final information about the process (e.g., a readable status)
+      -- (n) p_status        : Final status of the process (freely selected by the calling package)
+
+### Life Cycle of a LOG SESSION
+The NEW_SESSION function starts and the CLOSE_SESSION method ends a LOG session.
+
+Calling both is important to ensure correct logging.
+Regardless of this, logging is also possible without CLOSE_SESSION, for example, if the calling process is terminated prematurely or unexpectedly due to an error.    
+
+    
+    ---------------------------------
+    -- Update the status of a process
+    ---------------------------------
+    -- As mentioned at the beginning, there is only one entry in table ‘1’ for a logging session and the corresponding process.
+    -- The status of the process can be set using the following two procedures:
+    
+    procedure SET_PROCESS_STATUS(p_processId number, p_status number);
+    -- (m) p_processId       : ID of the process to which the session applies
+    -- (m) p_status          : Current status of the process (freely selected by the calling packet)
+    
+    procedure SET_PROCESS_STATUS(p_processId number, p_status number, p_processInfo varchar2);
+    -- (m) p_processId       : ID of the process to which the session applies
+    -- (m) p_status          : Current status of the process (freely selected by the calling packet)
+    -- (m) p_processInfo     : Current information about the process (e.g. a readable status)
+      
+    
+    ------------------
+    -- Logging details
+    ------------------
+    -- The following log methods encapsulate writing to table “2” depending on
+    -- the session-related log level set with the NEW_SESSION function.
+    -- 
+    -- These methods should be used for logging details, as this ensures that
+    -- necessary logging is guaranteed and unnecessary logging is avoided.
+    
+    -- The standard-logging procedures use the same parameters:
+    -- (m) p_processId     : ID of the process to which the session applies
+    -- (m) p_stepInfo      : Free text with information about the process
+
+    procedure INFO(p_processId number, p_stepInfo varchar2);
+    procedure DEBUG(p_processId number, p_stepInfo varchar2);
+    procedure WARN(p_processId number, p_stepInfo varchar2);
+    procedure ERROR(p_processId number, p_stepInfo varchar2);
+    
+    -- Forces the writing of log entries independent to the general log level
+    procedure LOG_DETAIL(p_processId number, p_stepInfo varchar2, p_logLevel number);
+    -- (m) p_processId     : ID of the process to which the session applies
+    -- (m) p_stepInfo      : Free text with information about the process
+    -- (m) p_logLevel      : This log level is written into the detail table
+
+
+
+    ----------
+    -- Testing
+    ----------
+    -- feel free
+    procedure insertProcess (p_tabName varchar2, p_processId number, p_logLevel number);
+    function test(p_processId number) return varchar2;
