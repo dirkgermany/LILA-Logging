@@ -55,21 +55,21 @@ begin
   -- begin a new logging session
   -- the last parameter refers to killing log entries which are older than the given number of days
   -- if this param is NULL, no log entry will be deleted
-  gProcessId := SO_LOG.new_session('my application', SO_LOG.logLevelWarn, 30);
+  gProcessId := so_log.new_session('my application', so_log.logLevelWarn, 30);
 
   -- write a log entry whenever you want
-  SO_LOG.info(gProcessId, 'Start');
+  so_log.info(gProcessId, 'Start');
   -- for more details...
-  SO_LOG.debug(gProcessId, 'Function A');
+  so_log.debug(gProcessId, 'Function A');
   -- e.g. informations when an exception was raised
-  SO_LOG.error(gProcessId, 'I made a fault');
+  so_log.error(gProcessId, 'I made a fault');
 
   -- also you can change the status during your process runs
-  SO_LOG.set_process_status(1, 'DONE');
+  so_log.set_process_status(1, 'DONE');
 
   -- last but not least end the logging session
   -- opional you can set the numbers of steps to do and steps done 
-  SO_LOG.close_session(gProcessId, 100, 99, 'DONE', 1);
+  so_log.close_session(gProcessId, 100, 99, 'DONE', 1);
 
 end MY_DEMO_PROC;
 ```
