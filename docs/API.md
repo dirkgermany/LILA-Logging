@@ -78,34 +78,39 @@ logLevelDebug   constant number := 8;
     procedure ERROR(p_processId number, p_stepInfo varchar2);
     
 ### Session Handling
+Shortcuts for parameter requirement:
 * <a id="M"> Mandatory</a>
-
-    -- (m) = mandatory
-    -- (o) = optional
-    -- (n) = NULL is allowed
+* <a id="O"> Optional</a>
+* <a id="N"> Nullable</a>
 
 #### Function NEW_SESSION
 The NEW_SESSION function starts the logging session for a process.
 | Parameter | Type | Description | Required
 | --------- | ---- | ----------- | -------
 | p_processName | VARCHAR2| freely selectable name for identifying the process; is written to table ‘1’ | [`M`](#m)
-| p_logLevel | NUMBER | determines the level of detail in table ‘2’ (see above) | Mandatory
-| p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | Nullable
-| p_tabNamePrefix | VARCHAR2 | optional prefix of the LOG table names (see above) | Optional
+| p_logLevel | NUMBER | determines the level of detail in table ‘2’ (see above) | [`M`](#m)
+| p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`N`](#m)
+| p_tabNamePrefix | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#m)
 
-Return
-Type
-Description
+**Returns**
+Type: NUMBER
+Description: The new process ID; this ID is required for subsequent calls in order to be able to assign the LOG calls to the process
 
-```sql    
-function  NEW_SESSION(p_processName varchar2, p_logLevel number, p_daysToKeep number, p_tabNamePrefix varchar2 default 'log_process') return number;
--- (m) p_processName   : 
--- (m) p_logLevel      : determines the level of detail in table ‘2’ (see above)
--- (n) p_daysToKeep    : max. age of entries in days; if not NULL, all entries older than p_daysToKeep
---                       and whose process name = p_processName (not case sensitive) are deleted
--- (o) p_tabNamePrefix : optional prefix of the LOG table names (see above)
---
--- return number       : the process ID; this ID is required for subsequent calls in order to be able to assign the LOG calls to the process
+**Syntax and Example**
+```sql
+-- Syntax
+NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToKeep NUMBER, p_tabNamePrefix VARCHAR2 DEFAULT 'LOG_PROCESS')
+
+-- Usage
+
+-- No deletion of old entries, log table name is 'LOG_PROCESS'
+gProcessId := SO_LOG.new_session('my application', SO_LOG.logLevelWarn, null);
+
+-- keep entries which are not older than 30 days
+gProcessId := SO_LOG.new_session('my application', SO_LOG.logLevelWarn, 30);
+
+-- use another log table name
+gProcessId := SO_LOG.new_session('my application', SO_LOG.logLevelWarn, null, 'MY_LOG_TABLE');
 ```      
     procedure CLOSE_SESSION(p_processId number, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status number);
       -- (m) p_processId     : ID of the process to which the session applies
