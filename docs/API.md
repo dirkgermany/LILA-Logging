@@ -6,8 +6,15 @@
 - [LOG Tables](#log-tables)
 - [Sequence](#sequence)
 - [LOG Level](#log-level)
--   [  Declaration of Log Levels](#declaration-of-log-levels)
+  - [Declaration of Log Levels](#declaration-of-log-levels)
 - [Functions and Procedures](#functions-and-procedures)
+  - [Session related Functions and Procedures](#session-related-functions-and-procedures)
+    - [Function NEW_SESSION](#function-new_session)
+    - [Procedure CLOSE_SESSION](#procedure-close_session)
+    - [Procedure SET_PROCESS_STATUS](#procedure-set_process_status)
+  - [Write Logs related Procedures](#write-logs-related-procedures)
+    - [General Logging Procedures](#general-logging-procedures)
+    - [Procedure LOG_DETAIL](#procedure-log_detail)
 
 </details>
 
@@ -247,9 +254,3 @@ PROCEDURE LOG_DETAIL(p_processId NUMBER, p_stepInfo VARCHAR2, p_logLevel NUMBER)
 -- write a log record
 so_log.log_detail(gProcessId, 'I ignore the log level');
 ```
-
-### Life Cycle of a LOG SESSION
-The NEW_SESSION function starts and the CLOSE_SESSION method ends a LOG session.
-
-Calling both is important to ensure correct logging.
-Regardless of this, logging is also possible without CLOSE_SESSION, for example, if the calling process is terminated prematurely or unexpectedly due to an error. 
