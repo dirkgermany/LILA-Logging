@@ -65,14 +65,15 @@ Shortcuts for parameter requirement:
 | ------------------ | --------- | ----------------------------------- | -------
 | [`NEW_SESSION`](#function-new_session) | Function  | Opens a new log session | Log Session
 | [`CLOSE_SESSION`](#procedure-close_session) | Procedure | Ends a log session | Log Session, Session Handling
-| SET_PROCESS_STATUS | Procedure | Sets the state of the log status    | Log Session, Session Handling
-| INFO               | Procedure | Writes INFO log entry               | Detail Logging
-| DEBUG              | Procedure | Writes DEBUG log entry              | Detail Logging
-| WARN               | Procedure | Writes WARN log entry               | Detail Logging
-| ERROR              | Procedure | Writes ERROR log entry              | Detail Logging
+| [`SET_PROCESS_STATUS`](#procedure-set_process_status) | Procedure | Sets the state of the log status    | Log Session, Session Handling
+| [`INFO`](#general-logging-procedures) | Procedure | Writes INFO log entry               | Detail Logging
+| [`DEBUG`](#general-logging-procedures) | Procedure | Writes DEBUG log entry              | Detail Logging
+| [`WARN`](#general-logging-procedures) | Procedure | Writes WARN log entry               | Detail Logging
+| [`ERROR`](#general-logging-procedures) | Procedure | Writes ERROR log entry              | Detail Logging
 | LOG_DETAIL         | Procedure | Writes log entry with any log level | Detail Logging
-    
-### Function NEW_SESSION
+
+### Session related Functions and Procedures
+#### Function NEW_SESSION
 The NEW_SESSION function starts the logging session for a process.
 | Parameter | Type | Description | Required
 | --------- | ---- | ----------- | -------
@@ -101,7 +102,7 @@ gProcessId := so_log.new_session('my application', so_log.logLevelWarn, 30);
 gProcessId := so_log.new_session('my application', so_log.logLevelWarn, null, 'MY_LOG_TABLE');
 ```
 
-### Procedure CLOSE_SESSION
+#### Procedure CLOSE_SESSION
 Ends a logging session with optional final informations.
 
 | Parameter | Type | Description | Required
@@ -128,7 +129,7 @@ so_log.close_session(gProcessId, null, null, 'Success', 1);
 so_log.close_session(gProcessId, 100, 99, 'Problem', 2);
 ```
 
-### Procedure SET_PROCESS_STATUS
+#### Procedure SET_PROCESS_STATUS
 Updates the status of a process.
 
 As mentioned at the beginning, there is only one entry in table ‘1’ for a logging session and the corresponding process.
@@ -160,31 +161,60 @@ PROCEDURE SET_PROCESS_STATUS(p_processId NUMBER, p_status NUMBER, p_processInfo 
 --------
 -- assuming that gProcessId is the global stored process ID
 
--- close without informations about process steps
+-- updating only by a status represented by a number
 so_log.set_process_status(gProcessId, 1);
--- close with additional informations about steps
+-- updating by using an additional information
 so_log.set_process_status(gProcessId, 1, 'OK');
 ```
 
-    
-    ------------------
-    -- Logging details
-    ------------------
-    -- The following log methods encapsulate writing to table “2” depending on
-    -- the session-related log level set with the NEW_SESSION function.
-    -- 
-    -- These methods should be used for logging details, as this ensures that
-    -- necessary logging is guaranteed and unnecessary logging is avoided.
-    
-    -- The standard-logging procedures use the same parameters:
-    -- (m) p_processId     : ID of the process to which the session applies
-    -- (m) p_stepInfo      : Free text with information about the process
+### Write Logs related Procedures
+#### General Logging Procedures
+The detailed log entries in log table '2' are written using various procedures.
+Depending on the log level corresponding to the desired entry, the appropriate procedure is called.
 
-    procedure INFO(p_processId number, p_stepInfo varchar2);
-    procedure DEBUG(p_processId number, p_stepInfo varchar2);
-    procedure WARN(p_processId number, p_stepInfo varchar2);
-    procedure ERROR(p_processId number, p_stepInfo varchar2);
+The procedures have the same signatures and differ only in their names.
+Their descriptions are therefore summarized below.
 
+* Procedure ERROR: details are written if the debug level is one of
+  - logLevelError
+  - logLevelWarn
+  - logLevelInfo
+  - logLevelDebug
+* Procedure WARN: details are written if the debug level is one of
+  - logLevelWarn
+  - logLevelInfo
+  - logLevelDebug
+* Procedure INFO: details are written if the debug level is one of
+  - logLevelInfo
+  - logLevelDebug
+* Procedure DEBUG: details are written if the debug level is one of
+  - logLevelDebug
+
+| Parameter | Type | Description | Required
+| --------- | ---- | ----------- | -------
+| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
+| p_stepInfo | VARCHAR2 | Free text with information about the process | [`M`](#m)
+
+**Syntax and Examples**
+```sql
+-- Syntax
+---------
+PROCEDURE ERROR(p_processId NUMBER, p_stepInfo VARCHAR2)
+PROCEDURE WARN(p_processId NUMBER, p_stepInfo VARCHAR2)
+PROCEDURE INFO(p_processId NUMBER, p_stepInfo VARCHAR2)
+PROCEDURE DEBUG(p_processId NUMBER, p_stepInfo VARCHAR2)
+
+-- Usage
+--------
+-- assuming that gProcessId is the global stored process ID
+
+-- write an error
+so_log.error(gProcessId, 'Something happened');
+-- write a debug information
+so_log.debug(gProcessId, 'Function was called');
+```
+
+#### Extended Logging Procedure
     -- Forces the writing of log entries independent to the general log level
     procedure LOG_DETAIL(p_processId number, p_stepInfo varchar2, p_logLevel number);
     -- (m) p_processId     : ID of the process to which the session applies
