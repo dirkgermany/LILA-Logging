@@ -13,10 +13,24 @@ Your processes can be identified by their names.
 * Check log entries in the log tables
 
 ## Logging
-simpleOraLogger monitors this informations about your processes:
+simpleOraLogger monitors different informations about your processes.
+
+***General informations***
 * Process name
 * Process ID
 * Begin and Start
 * Steps todo and steps done
 * Any info
 * (Last) status
+
+***Detailed informations***
+* Process ID
+* Serial number
+* Any info
+* Log level
+* Session time
+* Session user
+* Host name
+* Error stack (when exception was thrown)
+* Error backtrace (depends to log level)
+* Call stack (depends to log level)
