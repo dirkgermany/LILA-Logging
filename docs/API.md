@@ -1,6 +1,6 @@
 # simpleOraLogger API
 <details>
-<summary>Inhaltsverzeichnis</summary>
+<summary>Content</summary>
 
 - [Overview](#overview)
 - [LOG Tables](#log-tables)
@@ -224,13 +224,28 @@ so_log.error(gProcessId, 'Something happened');
 so_log.debug(gProcessId, 'Function was called');
 ```
 
-#### Extended Logging Procedure
-    -- Forces the writing of log entries independent to the general log level
-    procedure LOG_DETAIL(p_processId number, p_stepInfo varchar2, p_logLevel number);
-    -- (m) p_processId     : ID of the process to which the session applies
-    -- (m) p_stepInfo      : Free text with information about the process
-    -- (m) p_logLevel      : This log level is written into the detail table
+#### Procedure LOG_DETAIL
+Writes a LOG entry, regardless of the currently set LOG level.
 
+| Parameter | Type | Description | Required
+| --------- | ---- | ----------- | -------
+| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
+| p_stepInfo | VARCHAR2 | Free text with information about the process | [`M`](#m)
+| p_logLevel | NUMBER | This log level is written into the detail table | [`M`](#m)
+
+**Syntax and Examples**
+```sql
+-- Syntax
+---------
+PROCEDURE LOG_DETAIL(p_processId NUMBER, p_stepInfo VARCHAR2, p_logLevel NUMBER);
+
+-- Usage
+--------
+-- assuming that gProcessId is the global stored process ID
+
+-- write a log record
+so_log.log_detail(gProcessId, 'I ignore the log level');
+```
 
 ### Life Cycle of a LOG SESSION
 The NEW_SESSION function starts and the CLOSE_SESSION method ends a LOG session.
