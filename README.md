@@ -35,13 +35,30 @@ simpleOraLogger monitors different informations about your processes.
 * Error backtrace (depends to log level)
 * Call stack (depends to log level)
 
-## Demo   
-   ```sql
-   -- global process ID related to your log process
+## Demo
+You should use a 'global' variable to store the process id (better: logging).
+```sql
+   -- global process ID related to your logging process
    gProcessId number(19,0);
-
+```
+At first in your 'main' routine begin the log session
+```sql
    -- begin a new logging session
-   gProcessId := pck_logging.new_session('my application', simpleOraLogger.logLevelWarn, 30);
-   pck_logging.info(gProcessId, 'Something happened or not');
+   gProcessId := simpleOraLogger.new_session('my application', simpleOraLogger.logLevelWarn, 30);
+```
+Write log entries wherever you want
+```sql
+   -- e.g. simple informations
+   simpleOraLogger.info(gProcessId, 'Something happened or not');
+   -- e.g. informations when an exception was raised
+   simpleOraLogger.error(gProcessId, 'I made a fault');
 
-   ```sql
+   -- also you can change the status during your process runs
+   simpleOraLogger.set_process_status(1, 'DONE');
+```
+At last action end the logging session
+```sql
+  -- opional you can set the numbers of steps to do and steps done 
+  simpleOraLogger.close_session(gProcessId, 100, 99, 'DONE', 1);
+```
+
