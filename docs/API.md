@@ -46,7 +46,6 @@ To do this, the selected log level must be >= the level implied in the logging c
 >logLevelError  -> Calls to the ERROR() procedure are taken into account
 >
 >logLevelWarn   -> Calls to the WARN() and ERROR() procedures are taken into account
->
 >logLevelInfo   -> Calls to the INFO(), WARN(), and ERROR() procedures are taken into account
 >
 >logLevelDebug  -> Calls to the DEBUG(), INFO(), WARN(), and ERROR() procedures are taken into account
