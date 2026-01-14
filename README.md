@@ -1,4 +1,4 @@
-# simpleOraLogger
+# LILA
 
 ## Content
 - [About](#about)
@@ -7,10 +7,13 @@
 - [Demo](#demo)
 
 ## About
-simpleOraLogger is a logging framework.
-The framework itself is written as a PL/SQL package and enables other PL/SQL processes writing logs using a simple interface. simpleOraLogger enables simultaneous and multiple logging from the same session or different sessions.
+LILA **i**s **l**ogging **a**pplications. LILA is a framework.
+Written as a PL/SQL package it enables other PL/SQL processes writing logs using a simple interface. LILA enables simultaneous and multiple logging from the same session or different sessions.
+Two key requirements of LILA are:
+1. Simplicity of the interface
+2. Simultaneous logging from multiple or a single database session
 
-Even though debug informations can be written, simpleOraLogger is primarily intended for monitoring (automated) PL/SQL processes (hereinafter referred to as the processes).
+Even though debugging informations can be written, LILA is primarily intended for monitoring (automated) PL/SQL processes (hereinafter referred to as the processes).
 
 For easy monitoring log informations are written into two tables: one to see the status of your processes, one to see more details, e.g. if something went wrong.
 Your processes can be identified by their names.
@@ -21,7 +24,7 @@ Your processes can be identified by their names.
 * Check log entries in the log tables
 
 ## Logging
-simpleOraLogger monitors different informations about your processes.
+LILA monitors different informations about your processes.
 
 ***General informations***
 * Process name
