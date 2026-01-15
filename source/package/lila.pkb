@@ -1,11 +1,23 @@
 create or replace PACKAGE BODY LILA AS
 
-    -- Record representing one process
+    -- Record representing the internal session
     TYPE t_session_rec IS RECORD (
         process_id      NUMBER(19,0),
         counter_details NUMBER := 0,
         log_level       NUMBER := 0,
         tabName_prefix  VARCHAR2(100)
+    );
+
+    TYPE t_process_rec IS RECORD (
+        id      NUMBER(19,0),
+        process_name varchar2(100),
+        process_start TIMESTAMP,
+        process_end TIMESTAMP,
+        steps_todo NUMBER,
+        steps_done NUMBER,
+        status NUMBER,
+        info CLOB
+
     );
 
     -- Table for several processes
@@ -118,7 +130,7 @@ create or replace PACKAGE BODY LILA AS
                 steps_todo NUMBER,
                 steps_done number,
                 status number(1,0),
-                info varchar2(10)
+                info clob
             )';
             sqlStmt := replace(sqlStmt, 'NEW_TABLE_NAME', p_TabNamePrefix);
             execute immediate sqlStmt;
@@ -228,6 +240,7 @@ create or replace PACKAGE BODY LILA AS
     -- Matching of process name is not case sensitive
     procedure  deleteOldLogs(p_processId number, p_processName varchar2, p_daysToKeep number)
     as
+        pragma autonomous_transaction;
         sqlStatement varchar2(500);
         t_rc SYS_REFCURSOR;
         pProcessIdToDelete number;
@@ -271,10 +284,34 @@ create or replace PACKAGE BODY LILA AS
 
         end loop;
         close t_rc;  
-
-        execute immediate sqlStatement;
+        commit;
     end;
 
+	------------------------------------------------------------------------------------------------
+
+    function getProcessRecord(p_processId number) return t_process_rec
+    as
+        lProcessRec t_process_rec;
+        sqlStatement varchar2(300);
+    begin
+        sqlStatement := '
+        select
+            id,
+            process_name,
+            process_start,
+            process_end,
+            steps_todo,
+            steps_done,
+            status,
+            info
+        from PH_LILA_TABLE_NAME
+        where id = PH_PROCESS_ID';
+        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, null, null);
+        execute immediate sqlStatement into lProcessRec;
+        return lProcessRec;
+    end;
+
+	------------------------------------------------------------------------------------------------
 
     /*
 		Methods dedicated to the g_sessionList
@@ -601,6 +638,54 @@ create or replace PACKAGE BODY LILA AS
         lStepCounter := nvl(lStepCounter, 0) +1;
         set_steps_done(p_processId, lStepCounter);
     end;
+    
+	------------------------------------------------------------------------------------------------
+
+    function GET_STEPS_DONE(p_processId NUMBER) return number
+    as
+    begin
+        return getProcessRecord(p_processId).steps_done;
+    end;
+
+	------------------------------------------------------------------------------------------------
+
+    function GET_STEPS_TODO(p_processId NUMBER) return number
+    as
+    begin
+        return getProcessRecord(p_processId).steps_todo;
+    end;
+
+	------------------------------------------------------------------------------------------------
+    
+    function GET_PROCESS_START(p_processId NUMBER) return timestamp
+    as
+    begin
+        return getProcessRecord(p_processId).process_start;
+    end;
+    
+	------------------------------------------------------------------------------------------------
+    
+    function GET_PROCESS_END(p_processId NUMBER) return timestamp
+    as
+    begin
+        return getProcessRecord(p_processId).process_end;
+    end;
+
+	------------------------------------------------------------------------------------------------
+
+    function GET_PROCESS_STATUS(p_processId number) return number
+    as 
+    begin
+        return getProcessRecord(p_processId).status;
+    end;
+
+	------------------------------------------------------------------------------------------------
+
+    function GET_PROCESS_INFO(p_processId number) return varchar2
+    as 
+    begin
+        return getProcessRecord(p_processId).info;
+    end;
 
 	------------------------------------------------------------------------------------------------
     
@@ -639,6 +724,7 @@ create or replace PACKAGE BODY LILA AS
         if getSessionRecord(p_processId).process_id is null then
             return;
         end if;
+            dbms_output.enable();
 
 		if getSessionRecord(p_processId).log_level > logLevelSilent then
 	        sqlStatement := '
@@ -660,8 +746,11 @@ create or replace PACKAGE BODY LILA AS
             
             sqlStatement := sqlStatement || ' where id = PH_PROCESS_ID'; 
 	        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, p_status, p_processInfo, null, p_stepsToDo, p_stepsDone, null);
+            dbms_output.put_line(sqlStatement);
 	        execute immediate sqlStatement;
 	        commit;
+            
+            dbms_output.put_line('committed');
         end if;
         g_sessionList.delete(p_processId);
     end;
@@ -670,11 +759,52 @@ create or replace PACKAGE BODY LILA AS
 
     function NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNamePrefix VARCHAR2 DEFAULT 'LILA_PROCESS') return number
     as
-        lProcessId number;
+        pragma autonomous_transaction;
+        sqlStatement varchar2(600);
+        pProcessId number(19,0);
     begin
-        lProcessId := new_session(p_processName, p_logLevel, p_daysToKeep, p_tabNamePrefix);
-        set_steps_todo(lProcessId, p_stepsToDo);
-        return lProcessId;
+    dbms_output.enable();
+       -- If silent log mode don't do anything
+        if p_logLevel > logLevelSilent then
+	        -- Sicherstellen, dass die LOG-Tabellen existieren
+	        createLogTables(p_tabNamePrefix);
+        end if;
+
+        select seq_lila_log.nextVal into pProcessId from dual;
+        insertSession (p_tabNamePrefix, pProcessId, p_logLevel);
+
+		if p_logLevel > logLevelSilent then
+	        deleteOldLogs(pProcessId, upper(trim(p_processName)), p_daysToKeep);
+
+	        sqlStatement := '
+	        insert into PH_LILA_TABLE_NAME (
+	            id,
+	            process_name,
+	            process_start,
+	            process_end,
+	            steps_todo,
+	            steps_done,
+	            status,
+	            info
+	        )
+	        select
+	            PH_PROCESS_ID, 
+	            ''PH_PROCESS_NAME'', 
+	            current_timestamp,
+                null,
+	            PH_STEPS_TO_DO, 
+	            null,
+	            null,
+	            ''START''
+	        from dual';
+	        sqlStatement := replacePlaceHolders(pProcessId, sqlStatement, p_processName, null, null, null, p_stepsToDo, null, null);
+     dbms_output.enable();
+           dbms_output.put_line(sqlStatement);
+	        execute immediate sqlStatement;     
+
+	        commit;
+        end if;
+        return pProcessId;
     end;
 
 	------------------------------------------------------------------------------------------------
