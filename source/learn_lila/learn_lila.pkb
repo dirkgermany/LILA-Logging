@@ -75,7 +75,8 @@ create or replace PACKAGE BODY LEARN_LILA AS
             p_processName => 'print_process_infos',
             p_logLevel => lila.logLevelInfo,
             p_stepsToDo => 41,
-            p_daysToKeep => 1);            
+            p_daysToKeep => 1
+        );            
         lila.close_session(lProcessId, null, 42, 'Response', 7);
         return 'Process Informations: ID = ' || lProcessId || '; Status: ' || lila.get_process_status(lProcessId) || '; Info: ' || lila.get_process_info(lProcessId) || '; Steps todo: ' || lila.get_steps_todo(lProcessId) || '; Steps done: ' || lila.get_steps_done(lProcessId) || '; Start: ' || lila.get_process_start(lProcessId) || '; End: ' || lila.get_process_end(lProcessId);
     end;
