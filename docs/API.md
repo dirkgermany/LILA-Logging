@@ -18,7 +18,7 @@
     - [Procedure SET_PROCESS_STATUS](#procedure-set_process_status)
     - [Procedure SET_STEPS_TODO](#procedure-set_steps_todo)
     - [Procedure SET_STEPS_DONE](#procedure-set_steps_done)
-    - [Procedure STEP_COMPLETED](#procedure-step_completed)
+    - [Procedure STEP_DONE](#procedure-step_done)
   - [Write Logs related Procedures](#write-logs-related-procedures)
     - [General Logging Procedures](#general-logging-procedures)
     - [Procedure LOG_DETAIL](#procedure-log_detail)
@@ -130,7 +130,7 @@ logLevelDebug   constant number := 8;
 | [`SET_PROCESS_STATUS`](#procedure-set_process_status) | Procedure | Sets the state of the log status | Log Session
 | [`SET_STEPS_TODO`](#procedure-set_steps_todo) | Procedure | Sets the required number of actions | Log Session
 | [`SET_STEPS_DONE`](#procedure-set_steps_todo) | Procedure | Sets the number of completed actions | Log Session
-| [`STEP_COMPLETED`](#procedure-step_completed) | Procedure | Increments the counter of completed steps | Log Session
+| [`STEP_DONE`](#procedure-step_done) | Procedure | Increments the counter of completed steps | Log Session
 | [`INFO`](#general-logging-procedures) | Procedure | Writes INFO log entry               | Detail Logging
 | [`DEBUG`](#general-logging-procedures) | Procedure | Writes DEBUG log entry              | Detail Logging
 | [`WARN`](#general-logging-procedures) | Procedure | Writes WARN log entry               | Detail Logging
@@ -313,7 +313,7 @@ PROCEDURE SET_STEPS_DONE(p_processId NUMBER, p_stepsDone NUMBER)
 lila.set_steps_done(gProcessId, 99);
 ```
 
-#### Procedure STEP_COMPLETED
+#### Procedure STEP_DONE
 Increments the number of already completed steps in the log entry of the *master table*.
 
 | Parameter | Type | Description | Required
@@ -324,14 +324,14 @@ Increments the number of already completed steps in the log entry of the *master
 ```sql
 -- Syntax
 ---------
-PROCEDURE STEP_COMPLETED(p_processId NUMBER)
+PROCEDURE STEP_DONE(p_processId NUMBER)
 
 -- Usage
 --------
 -- assuming that gProcessId is the global stored process ID
 
 -- something like a trigger
-lila.step_completed(gProcessId);
+lila.step_done(gProcessId);
 ```
 
 ### Write Logs related Procedures
