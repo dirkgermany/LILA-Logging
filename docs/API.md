@@ -402,7 +402,7 @@ lila.log_detail(gProcessId, 'I ignore the log level');
 ### Testing
 Independent to other Packages you can check if LILA works in general.
 
-#### PROCEDURE IS_ALIVE
+#### Procedure IS_ALIVE
 Creates one entry in the *master table* and one in the detail table.
 
 This procedure needs no parameters.
