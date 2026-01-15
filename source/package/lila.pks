@@ -26,7 +26,7 @@ create or replace PACKAGE LILA AS
     procedure SET_PROCESS_STATUS(p_processId number, p_status number, p_processInfo varchar2);
     procedure SET_STEPS_TODO(p_processId NUMBER, p_stepsToDo NUMBER);
     procedure SET_STEPS_DONE(p_processId NUMBER, p_stepsDone NUMBER);
-    procedure STEP_COMPLETED(p_processId NUMBER);
+    procedure STEP_DONE(p_processId NUMBER);
     
     ------------------
     -- Logging details
