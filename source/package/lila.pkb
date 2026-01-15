@@ -587,7 +587,7 @@ create or replace PACKAGE BODY LILA AS
     end;
 	------------------------------------------------------------------------------------------------
     
-    procedure STEP_COMPLETED(p_processId number)
+    procedure STEP_DONE(p_processId number)
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
