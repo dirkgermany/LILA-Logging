@@ -13,6 +13,7 @@ create or replace PACKAGE BODY LILA AS
         process_name varchar2(100),
         process_start TIMESTAMP,
         process_end TIMESTAMP,
+        last_update TIMESTAMP,
         steps_todo NUMBER,
         steps_done NUMBER,
         status NUMBER,
@@ -120,13 +121,14 @@ create or replace PACKAGE BODY LILA AS
         end if;
 
         if not tableExists(p_TabNamePrefix) then
-            -- Basic table
+            -- Master table
             sqlStmt := '
             create table NEW_TABLE_NAME ( 
                 id number(19,0),
                 process_name varchar2(100),
                 process_start timestamp(6),
                 process_end timestamp(6),
+                last_update timestamp(6),
                 steps_todo NUMBER,
                 steps_done number,
                 status number(1,0),
@@ -300,6 +302,7 @@ create or replace PACKAGE BODY LILA AS
             process_name,
             process_start,
             process_end,
+            last_update,
             steps_todo,
             steps_done,
             status,
@@ -563,7 +566,8 @@ create or replace PACKAGE BODY LILA AS
     begin
         sqlStatement := '
         update PH_LILA_TABLE_NAME
-        set status = PH_STATUS 
+        set status = PH_STATUS,
+            last_update = current_timestamp
         where id = PH_PROCESS_ID';   
         sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, p_status, null, null, null, null, null);
         execute immediate sqlStatement;
@@ -581,7 +585,8 @@ create or replace PACKAGE BODY LILA AS
         sqlStatement := '
         update PH_LILA_TABLE_NAME
         set status = PH_STATUS,
-            info = ''PH_PROCESS_INFO''
+            info = ''PH_PROCESS_INFO'',
+            last_update = current_timestamp
         where id = PH_PROCESS_ID';
         sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, p_status, p_processInfo, null, null, null, null);
         execute immediate sqlStatement;
@@ -597,7 +602,8 @@ create or replace PACKAGE BODY LILA AS
     begin
         sqlStatement := '
         update PH_LILA_TABLE_NAME
-        set steps_todo = PH_STEPS_TODO 
+        set steps_todo = PH_STEPS_TODO,
+            last_update = current_timestamp
         where id = PH_PROCESS_ID';   
         sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, null, null);
         sqlStatement := replace(sqlStatement, 'PH_STEPS_TODO', to_char(p_stepsToDo));
@@ -614,7 +620,8 @@ create or replace PACKAGE BODY LILA AS
     begin
         sqlStatement := '
         update PH_LILA_TABLE_NAME
-        set steps_done = PH_STEPS_DONE 
+        set steps_done = PH_STEPS_DONE,
+            last_update = current_timestamp
         where id = PH_PROCESS_ID';   
         sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, p_stepsDone, null);
         execute immediate sqlStatement;
@@ -703,7 +710,8 @@ create or replace PACKAGE BODY LILA AS
 		if getSessionRecord(p_processId).log_level > logLevelSilent then
 	        sqlStatement := '
 	        update PH_LILA_TABLE_NAME
-	        set process_end = current_timestamp
+	        set process_end = current_timestamp,
+                last_update = current_timestamp
 	        where id = PH_PROCESS_ID';   
 	        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, null, null);
 	        execute immediate sqlStatement;
@@ -729,8 +737,9 @@ create or replace PACKAGE BODY LILA AS
 		if getSessionRecord(p_processId).log_level > logLevelSilent then
 	        sqlStatement := '
 	        update PH_LILA_TABLE_NAME
-	        set process_end = current_timestamp';
-            
+	        set process_end = current_timestamp,
+                last_update = current_timestamp';
+
             if p_stepsDone is not null then
                 sqlStatement := sqlStatement || ', steps_done = PH_STEPS_DONE';
             end if;
@@ -781,6 +790,7 @@ create or replace PACKAGE BODY LILA AS
 	            id,
 	            process_name,
 	            process_start,
+				last_update,
 	            process_end,
 	            steps_todo,
 	            steps_done,
@@ -791,6 +801,7 @@ create or replace PACKAGE BODY LILA AS
 	            PH_PROCESS_ID, 
 	            ''PH_PROCESS_NAME'', 
 	            current_timestamp,
+				current_timestamp,
                 null,
 	            PH_STEPS_TO_DO, 
 	            null,
@@ -798,8 +809,6 @@ create or replace PACKAGE BODY LILA AS
 	            ''START''
 	        from dual';
 	        sqlStatement := replacePlaceHolders(pProcessId, sqlStatement, p_processName, null, null, null, p_stepsToDo, null, null);
-     dbms_output.enable();
-           dbms_output.put_line(sqlStatement);
 	        execute immediate sqlStatement;     
 
 	        commit;
@@ -835,6 +844,7 @@ create or replace PACKAGE BODY LILA AS
 	            id,
 	            process_name,
 	            process_start,
+				last_update,
 	            process_end,
 	            steps_todo,
 	            steps_done,
@@ -844,6 +854,7 @@ create or replace PACKAGE BODY LILA AS
 	        select
 	            PH_PROCESS_ID, 
 	            ''PH_PROCESS_NAME'', 
+	            current_timestamp,
 	            current_timestamp,
 	            null, 
 	            null,
