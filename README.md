@@ -2,33 +2,42 @@
 
 ## Content
 - [About](#about)
-- [Simple?](#simple)
+- [Key features](#key-features)
+- [Lightwight?](#lightwight)
+- [Simplicity?](#simplicity)
 - [Logging](#logging)
+- [Monitoring](#monitoring)
 - [Demo](#demo)
 
 ## About
-LILA **i**s **l**ogging **a**pplications. LILA is a framework.
-Written as a PL/SQL package for Oracle it enables other PL/SQL processes writing logs using a simple interface. LILA enables simultaneous and multiple logging from the same session or different sessions.
-Two key requirements of LILA are:
-1. Simplicity of the interface
-2. Simultaneous logging from one or multiple database sessions
+LILA **i**s **l**ogging **a**pplications. LILA is a lightwight logging framework. And a little bit more.
 
-Even though debugging informations can be written, LILA is primarily intended for monitoring (automated) PL/SQL processes (hereinafter referred to as the processes).
+Written as a PL/SQL package for Oracle it enables other Oracle processes writing logs using a simple interface. LILA enables simultaneous and multiple logging from the same session or different sessions.
+Because LILA provides information about the processes, it can be used directly for monitoring purposes without additional database queries.
 
-For easy monitoring log informations are written into two tables: one to see the status of your processes, one to see more details, e.g. if something went wrong.
-Your processes can be identified by their names.
+## Key features
+1. Simplicity
+2. Lightwight
+3. Parallel logging from one or multiple database sessions
+4. Supports monitoring per API
 
-## Simple?
+## Lightwight?
+LILA consists of a PL/SQL package, two tables and a sequence. That's it.
+
+## Simplicity?
+All you need to use LILA is
 * Create Sequence and Package
   * Create Sequence by a simple statement (see statement in documentation)
   * Copy the package code to your database schema and compile
-* Call the logging procedures/functions out of your PL/SQL code
-* Check log entries in the log tables
+* Call the logging API out of your code
+* Check process logs
+  * in the log tables
+  * per API
 
 ## Logging
 LILA monitors different informations about your processes.
 
-***General informations***
+***Process informations***
 * Process name
 * Process ID
 * Begin and Start
@@ -47,6 +56,15 @@ LILA monitors different informations about your processes.
 * Error stack (when exception was thrown)
 * Error backtrace (depends to log level)
 * Call stack (depends to log level)
+
+## Monitoring
+The above process information can be read via the API interface.
+* Process name
+* Process ID
+* Begin and Start
+* Steps todo and steps done
+* Info
+* Status
 
 ## Demo
 ### Usage from your PL/SQL
@@ -78,7 +96,7 @@ begin
 
 end MY_DEMO_PROC;
 ```
-### Check log entries
+### Log entries per SQL
 ```sql
   -- main entries are written to the default log table LILA_PROCESS
   -- details are writte to the default detail log table LILA_PROCESS_DETAIL
