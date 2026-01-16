@@ -18,6 +18,8 @@ LILA **i**s **l**ogging **a**pplications. LILA is a lightwight logging framework
 Written as a PL/SQL package for Oracle it enables other Oracle processes writing logs using a simple interface. LILA enables simultaneous and multiple logging from the same session or different sessions.
 Because LILA provides information about the processes, it can be used directly for monitoring purposes without additional database queries.
 
+LILA is developed by a developer who hates over-engineered tools. Focus: 5 minutes to integrate, 100% visibility.
+
 Detailed information on setup and the API you will find in the [documentation folder](docs/).
 
 ## Key features
