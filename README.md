@@ -40,7 +40,7 @@ Have a look to the [sample application "learn_lila"](source/sample).
 ---
 ## Logging
 LILA persists different information about your processes.
-To keep it easy the information are stored in two tables:
+For simplicity, all logs are stored in two tables.
 
 1. The master table contains data about the process itself (the live-dashboard). Always exactly one record per process. This table frees you from complex queries such as “group by,” “max(timestamp),” etc., which you would otherwise have to run on thousands or millions of rows to see the current status of your process.
 
