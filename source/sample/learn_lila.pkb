@@ -1,21 +1,5 @@
 create or replace PACKAGE BODY LEARN_LILA AS
 
-    gProcessIdProcess_1 number (19,0);
-    gLogLevel number := lila.logLevelDebug;
-    
-    procedure process1_newSession
-    as
-    begin
-        gProcessIdProcess_1 := lila.new_session('P', gLogLevel, 1);
-    end;
-    
-    procedure process1_log(logText varchar2)
-    as
-    begin
-        lila.info(gProcessIdProcess_1, 'logText');
-    end;
-    
-    
     /*
         First steps:
         * open logging session
@@ -32,7 +16,7 @@ create or replace PACKAGE BODY LEARN_LILA AS
         lila.set_process_status(lProcessId, 1, 'Perfect!');
         lila.close_session(lProcessId);
     end;
-    
+
     -- Starts without steps, sets steps_todo after starting and increments the completed steps
     -- No detail will be written
     procedure increment_steps_and_monitor
@@ -54,7 +38,7 @@ create or replace PACKAGE BODY LEARN_LILA AS
         dbms_output.put_line('Process End: ' || lila.get_process_end(lProcessId));
     end;
 
-    
+
     -- Starts with a number of steps, ends with a number of steps processed
     -- No detail will be written
     procedure begin_and_end_with_steps
@@ -77,9 +61,14 @@ create or replace PACKAGE BODY LEARN_LILA AS
             p_stepsToDo   => 41,
             p_daysToKeep  => 1
         );            
-        lila.close_session(lProcessId, null, 42, 'Response', 7);
+        lila.close_session(
+            p_processId   => lProcessId,
+            p_stepsToDo   => null,
+            p_stepsDone   => 42,
+            p_processInfo => 'Response',
+            p_status      => 7
+        );
+
         return 'Process Informations: ID = ' || lProcessId || '; Status: ' || lila.get_process_status(lProcessId) || '; Info: ' || lila.get_process_info(lProcessId) || '; Steps todo: ' || lila.get_steps_todo(lProcessId) || '; Steps done: ' || lila.get_steps_done(lProcessId) || '; Start: ' || lila.get_process_start(lProcessId) || '; End: ' || lila.get_process_end(lProcessId);
     end;
-    
-
 END LEARN_LILA;
