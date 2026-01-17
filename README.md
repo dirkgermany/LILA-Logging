@@ -24,11 +24,10 @@ LILA is developed by a developer who hates over-engineered tools. Focus: 5 minut
 1. **Lightweight**: One Package, two Tables, one Sequence. That's it.
 2. **Concurrent Logging**: Supports multiple, simultaneous log entries from the same or different sessions without blocking
 7. **Monitoring**: You have the option to observe your applications via SQL or by the API
-3. **Parallel Execution**: Designed for high-performance Oracle environments
 4. **Data Integrity**: Uses autonomous transactions to guarantee log persistence regardless of the main transaction's outcome
 5. **Smart Context Capture**: Automatically records ERR_STACK,  ERR_BACKTRACE, and ERR_CALLSTACK based on log level—deep insights with zero manual effort.
 8. **Optional self-cleaning**: Automatically purges expired logs per application during session start—no background jobs or schedulers required
-7. **Version Compatibility**: Fully tested on the latest Oracle AI Database 26ai (2026)
+7. **Future Ready**: Built for the latest Oracle 26ai (2026), and fully tested with existing 19c/21c environments
 8. **Small Footprint**: Under 700 lines of logical PL/SQL code. Easy to audit, fast to compile, and zero bloat
 
 ## Fast integration
