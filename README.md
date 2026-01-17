@@ -44,7 +44,7 @@ To keep it easy the informations are stored in two tables:
 * Process ID
 * Timestamps process_start
 * Timestamp process_end
-* Timestamp last_update (should be identical with timestamp process_end, if exists)
+* Timestamp last_update (at end of your process identical with timestamp of process_end)
 * Steps todo and steps done
 * Any info
 * (Last) status
