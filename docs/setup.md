@@ -55,6 +55,6 @@ After all creation steps are done successfully, you can test LILA by calling the
 -- call LILA
 execute lila.is_alive;
 -- show LILA log data
-select * from LILA_PROCESS;
-select * from LILA_PROCESS_DETAIL;
+select * from LILA_LOG;
+select * from LILA_LOG_DETAIL;
 ```
