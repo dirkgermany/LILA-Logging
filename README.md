@@ -6,7 +6,7 @@
 
 
 
-LILA is a lightweight logging and monitoring framework designed for Oracle PL/SQL applications. It provides a fast, parallel way to track processes. Its simple API allows for seamless integration into existing applications with minimal overhead.
+LILA is a lightweight logging and monitoring framework designed for Oracle PL/SQL applications. It provides a fast, concurrent way to track processes. Its simple API allows for seamless integration into existing applications with minimal overhead.
 
 LILA utilizes autonomous transactions to ensure that all log entries are persisted, even if the main process performs a rollback.
 
