@@ -3,7 +3,7 @@
 [![Lizenz](https://img.shields.io/github/license/dirkgermany/LILA-Logging)](https://github.com/dirkgermany/LILA-Logging/blob/main/LICENSE)
 [![Größe](https://img.shields.io/github/repo-size/dirkgermany/LILA-Logging)](https://https://github.com/dirkgermany/LILA-Logging)
 
-LILA **i**s **l**ogging **a**pplications.
+LILA (LILA **I**ntegrated **L**ogging **A**rchitecture)
 
 LILA is a lightweight logging and monitoring framework designed for Oracle PL/SQL applications. It provides a fast, parallel way to track processes. Its simple API allows for seamless integration into existing applications with minimal overhead.
 LILA is developed by a developer who hates over-engineered tools. Focus: 5 minutes to integrate, 100% visibility.
