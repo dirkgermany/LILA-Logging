@@ -6,35 +6,28 @@
 ## Content
 - [About](#about)
 - [Key features](#key-features)
-- [Lightwight?](#lightwight)
-- [Simplicity?](#simplicity)
+- [Fast integration](#fast-integration)
 - [Logging](#logging)
   - [How to log](#how-to-log)
 - [Monitoring](#monitoring)
   - [How to monitor](#how-to-monitor)
 
 ## About
-LILA **i**s **l**ogging **a**pplications. LILA is a lightwight logging framework. And a little bit more.
+LILA **i**s **l**ogging **a**pplications.
 
-Written as a PL/SQL package for Oracle it enables other Oracle processes writing logs using a simple interface. LILA enables simultaneous and multiple logging from the same session or different sessions.
-Because LILA provides information about the processes, it can be used directly for monitoring purposes without additional database queries.
-
+LILA is a lightweight logging and monitoring framework designed for Oracle PL/SQL applications. It provides a fast, parallel way to track processes. Its simple API allows for seamless integration into existing applications with minimal overhead.
 LILA is developed by a developer who hates over-engineered tools. Focus: 5 minutes to integrate, 100% visibility.
 
 Detailed information on setup and the API you will find in the [documentation folder](docs/).
 
 ## Key features
-1. Simplicity
-2. Lightwight
-3. Parallel logging from one or multiple database sessions
-4. Supports monitoring per SQL and API
-5. Clear code for individual customizing
-6. Intuitive API
+2. **Lightwight**: One Package, two Tables, one Sequence. That's it.
+3. **Concurrent Logging**: Supports multiple, simultaneous log entries from the same or different sessions without blocking
+4. **Parallel Execution**: Designed for high-performance Oracle environments
+5. **Version Compatibility**: Fully tested on the latest Oracle AI Database 26ai (2026)
+7.**Monitoring**: You have the option to observe your applications per SQL or by the API
 
-## Lightwight?
-LILA consists of a PL/SQL package, two tables and a sequence. That's it.
-
-## Simplicity?
+## Fast integration
 * Setting up LILA means creating a sequence and a package (refer [documentation file "setup.md"](docs/setup.md))
 * Only a few API calls are necessary for the complete logging of a process (refer [documentation file "API.md"](docs/API.md))
 * Analysing or monitoring your process requires simple sql statements or API requests
