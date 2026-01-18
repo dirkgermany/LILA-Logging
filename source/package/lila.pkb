@@ -5,7 +5,7 @@ create or replace PACKAGE BODY LILA AS
         process_id      NUMBER(19,0),
         counter_details NUMBER := 0,
         log_level       NUMBER := 0,
-        tabName_prefix  VARCHAR2(100)
+        tabName_master  VARCHAR2(100)
     );
 
     TYPE t_process_rec IS RECORD (
@@ -18,7 +18,6 @@ create or replace PACKAGE BODY LILA AS
         steps_done NUMBER,
         status NUMBER,
         info CLOB
-
     );
 
     -- Table for several processes
@@ -29,26 +28,10 @@ create or replace PACKAGE BODY LILA AS
     TYPE t_search_idx IS TABLE OF PLS_INTEGER INDEX BY BINARY_INTEGER;
     v_index t_search_idx;
 
-    -- Placeholders for Statements
-    PH_LILA_TABLE_NAME constant varchar2(30) := 'PH_LILA_TABLE_NAME';
-    PH_LILA_DETAIL_TABLE_NAME constant varchar2(30) := 'PH_LILA_DETAIL_TABLE_NAME';
-    PH_PROCESS_NAME constant varchar2(30) := 'PH_PROCESS_NAME';
-    PH_PROCESS_INFO constant varchar2(30) := 'PH_PROCESS_INFO';
-    PH_COUNTER_DETAILS constant varchar2(30) := 'PH_COUNTER_DETAILS';
-    PH_STEP_INFO constant varchar2(30) := 'PH_STEP_INFO';
-    PH_PROCESS_ID constant varchar2(30) := 'PH_PROCESS_ID';
-    PH_STATUS constant varchar2(30) := 'PH_STATUS';
-    PH_STEPS_TO_DO constant varchar2(30) := 'PH_STEPS_TO_DO';
-    PH_STEPS_DONE constant varchar2(30) := 'PH_STEPS_DONE';
-    PH_LOG_LEVEL constant varchar2(30) := 'PH_LOG_LEVEL';
-    PH_SESSION_USER constant varchar2(30) := 'PH_SESSION_USER';
-    PH_HOST_NAME constant varchar2(30) := 'PH_HOST_NAME';
-    PH_ERR_CALLSTACK constant varchar2(30) := 'PH_ERR_CALLSTACK';
-    PH_ERR_STACK constant varchar2(30) := 'PH_ERR_STACK';
-    PH_ERR_BACKTRACE constant varchar2(30) := 'PH_ERR_BACKTRACE';
-
-
-    cr constant varchar2(2) := chr(13) || chr(10);
+--    cr constant varchar2(2) := chr(13) || chr(10);
+    PARAM_MASTER_TABLE constant varchar2(20) := 'PH_MASTER_TABLE';
+    PARAM_DETAIL_TABLE constant varchar2(20) := 'PH_DETAIL_TABLE';
+    SUFFIX_DETAIL_NAME constant varchar2(16) := '_DETAIL';
     function getSessionRecord(p_processId number) return t_session_rec;
 
     /*
@@ -105,14 +88,13 @@ create or replace PACKAGE BODY LILA AS
             return true;
         else
             return false;
-        end if;    
-    end;
+        end if;    end;
 
 	------------------------------------------------------------------------------------------------
 
     -- Creates LOG tables and the sequence for the process IDs if tables or sequence don't exist
     -- For naming rules of the tables see package description
-    procedure createLogTables(p_TabNamePrefix varchar2)
+    procedure createLogTables(p_TabNameMaster varchar2)
     as
         sqlStmt varchar2(500);
     begin
@@ -121,7 +103,7 @@ create or replace PACKAGE BODY LILA AS
             execute immediate sqlStmt;
         end if;
 
-        if not tableExists(p_TabNamePrefix) then
+        if not tableExists(p_TabNameMaster) then
             -- Master table
             sqlStmt := '
             create table NEW_TABLE_NAME ( 
@@ -135,17 +117,17 @@ create or replace PACKAGE BODY LILA AS
                 status number(1,0),
                 info clob
             )';
-            sqlStmt := replace(sqlStmt, 'NEW_TABLE_NAME', p_TabNamePrefix);
+            sqlStmt := replace(sqlStmt, 'NEW_TABLE_NAME', p_TabNameMaster);
             execute immediate sqlStmt;
 
             sqlStmt := '
 			CREATE INDEX idx_lila_cleanup 
 			ON NEW_TABLE_NAME (process_name, process_end)';
-            sqlStmt := replace(sqlStmt, 'NEW_TABLE_NAME', p_TabNamePrefix);
+            sqlStmt := replace(sqlStmt, 'NEW_TABLE_NAME', p_TabNameMaster);
             execute immediate sqlStmt;
         end if;
 
-        if not tableExists(p_TabNamePrefix) then
+        if not tableExists(p_TabNameMaster || '_DETAIL') then
             -- Details table
             sqlStmt := '
             create table NEW_DETAIL_TABLE_NAME (
@@ -160,13 +142,13 @@ create or replace PACKAGE BODY LILA AS
                 err_backtrace clob,
                 err_callstack clob
             )';
-            sqlStmt := replace(sqlStmt, 'NEW_DETAIL_TABLE_NAME', p_TabNamePrefix || '_DETAIL');
+            sqlStmt := replace(sqlStmt, 'NEW_DETAIL_TABLE_NAME', p_TabNameMaster || '_DETAIL');
             execute immediate sqlStmt;
             
             sqlStmt := '
 			CREATE INDEX idx_lila_detail_master
 			ON NEW_DETAIL_TABLE_NAME (process_id)';
-            sqlStmt := replace(sqlStmt, 'NEW_DETAIL_TABLE_NAME', p_TabNamePrefix || '_DETAIL');
+            sqlStmt := replace(sqlStmt, 'NEW_DETAIL_TABLE_NAME', p_TabNameMaster || '_DETAIL');
             execute immediate sqlStmt;
         end if;
 
@@ -177,56 +159,21 @@ create or replace PACKAGE BODY LILA AS
         dbms_output.put_line(sqlerrm);
         dbms_output.put_line(sqlStmt);
      end;
-
+     
 	------------------------------------------------------------------------------------------------
 
-    -- Simplifies the handling of SQL-Statements.
-    -- Enables the usage of placeholders within the statetements which are replaced here.
-    -- The placeholders and it's values are specific and hard related to each other.
-    -- Some values are given by the function header, some by the record which belongs to the process.
-    function replacePlaceHolders(pProcessId number, pStringToReplace varchar2, pProcessName varchar2, pStatus number, pProcessInfo varchar2, 
-        pStepInfo varchar2, pStepsToDo number, pStepsDone number, pLogLevel number) return varchar2
+    function replaceNameDetailTable(p_sqlStatement varchar2, p_placeHolder varchar2, p_tableName varchar2) return varchar2
     as
-        replacedString varchar2(4000) := pStringToReplace;
-        processRecord t_session_rec;
     begin
-        -- find record which relates to the process id
-        processRecord := getSessionRecord(pProcessId);
-        
-        replacedString := replace(
-            replace(
-                replace(
-                    replace(
-                        replace(
-                            replace(
-                                replace(
-                                    replace(
-                                        replace(
-                                            replace(
-                                                replace(
-                                                    replace(
-                                                        replace(
-                                                            replace(
-                                                                replace(
-                                                                    replace(
-                                                                        replacedString, PH_LILA_TABLE_NAME, processRecord.tabName_prefix
-                                                                    ), PH_LILA_DETAIL_TABLE_NAME,  processRecord.tabName_prefix || '_DETAIL'
-                                                                ), PH_PROCESS_NAME, pProcessName
-                                                            ), PH_PROCESS_INFO, pProcessInfo
-                                                        ), PH_COUNTER_DETAILS, processRecord.counter_details
-                                                    ), PH_STEP_INFO, pStepInfo
-                                                ), PH_PROCESS_ID, pProcessId
-                                            ), PH_STATUS, pStatus
-                                        ), PH_STEPS_TO_DO, pStepsToDo
-                                    ), PH_STEPS_DONE, pStepsDone
-                                ), PH_LOG_LEVEL, getLogLevelAsText(pLogLevel)
-                            ), PH_SESSION_USER, SYS_CONTEXT('USERENV','SESSION_USER')
-                        ), PH_HOST_NAME, SYS_CONTEXT('USERENV','HOST')
-                    ), PH_ERR_CALLSTACK, DBMS_UTILITY.FORMAT_CALL_STACK
-                ), PH_ERR_STACK, DBMS_UTILITY.FORMAT_ERROR_STACK
-            ), PH_ERR_BACKTRACE, DBMS_UTILITY.FORMAT_ERROR_BACKTRACE
-        );
-        return replacedString;
+        return replace(p_sqlStatement, p_placeHolder, p_tableName || '_DETAIL');
+    end;
+    
+	------------------------------------------------------------------------------------------------
+
+    function replaceNameMasterTable(p_sqlStatement varchar2, p_placeHolder varchar2, p_tableName varchar2) return varchar2
+    as
+    begin
+        return replace(p_sqlStatement, p_placeHolder, p_tableName);
     end;
 
 	------------------------------------------------------------------------------------------------
@@ -238,7 +185,8 @@ create or replace PACKAGE BODY LILA AS
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
         t_rc SYS_REFCURSOR;
-        pProcessIdToDelete number;
+        sessionRec t_session_rec;
+        processIdToDelete number;
     begin
         if p_daysToKeep is null then
             return;
@@ -246,35 +194,32 @@ create or replace PACKAGE BODY LILA AS
 
         -- find out process IDs
         sqlStatement := '
-        select id from PH_LILA_TABLE_NAME
-        where process_end <= sysdate - PH_DAYS_TO_KEEP
-        and upper(process_name) = upper(''PH_PROCESS_NAME'')';
+        select id from PH_MASTER_TABLE
+        where process_end <= sysdate - :PH_DAYS_TO_KEEP
+        and upper(process_name) = upper(:PH_PROCESS_NAME)';
         
-        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, p_processName, null, null, null, null, null, null);
-        sqlStatement := replace(sqlStatement, 'PH_DAYS_TO_KEEP', to_char(p_daysToKeep));
+        sessionRec := getSessionRecord(p_processId);
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);
 
         -- for all process IDs
-        open t_rc for sqlStatement;
+        open t_rc for sqlStatement using p_daysToKeep, p_processName;
         loop
-            fetch t_rc into pProcessIdToDelete;
+            fetch t_rc into processIdToDelete;
             EXIT WHEN t_rc%NOTFOUND;
+    
+            -- kill entries from log details table first (perhaps later there is a constraint)
+            sqlStatement := '
+            delete from PH_DETAIL_TABLE
+            where process_id = :PH_ID';
+            sqlStatement := replaceNameDetailTable(sqlStatement, PARAM_DETAIL_TABLE, sessionRec.tabName_master);
+            execute immediate sqlStatement using processIdToDelete;
 
             -- kill entries in main log table
             sqlStatement := '
-            delete from PH_LILA_TABLE_NAME
-            where id = PH_ID';
-
-            sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, null, null);
-            sqlStatement := replace(sqlStatement, 'PH_ID', to_char(pProcessIdToDelete));
-            execute immediate sqlStatement;
-
-            -- kill entries from log details table
-            sqlStatement := '
-            delete from PH_LILA_DETAIL_TABLE_NAME
-            where process_id = PH_ID';
-            sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, null, null);
-            sqlStatement := replace(sqlStatement, 'PH_ID', to_char(pProcessIdToDelete));
-            execute immediate sqlStatement;
+            delete from PH_MASTER_TABLE
+            where id = :PH_ID';
+            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);
+            execute immediate sqlStatement using processIdToDelete;
 
         end loop;
         close t_rc;  
@@ -285,7 +230,8 @@ create or replace PACKAGE BODY LILA AS
 
     function getProcessRecord(p_processId number) return t_process_rec
     as
-        lProcessRec t_process_rec;
+        sessionRec t_session_rec;
+        processRec t_process_rec;
         sqlStatement varchar2(300);
     begin
         sqlStatement := '
@@ -299,11 +245,13 @@ create or replace PACKAGE BODY LILA AS
             steps_done,
             status,
             info
-        from PH_LILA_TABLE_NAME
-        where id = PH_PROCESS_ID';
-        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, null, null);
-        execute immediate sqlStatement into lProcessRec;
-        return lProcessRec;
+        from PH_MASTER_TABLE
+        where id = :PH_PROCESS_ID';
+        
+        sessionRec := getSessionRecord(p_processId);
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);
+        execute immediate sqlStatement into processRec using p_processId;
+        return processRec;
     end;
 
 	------------------------------------------------------------------------------------------------
@@ -381,7 +329,7 @@ create or replace PACKAGE BODY LILA AS
         g_sessionList(v_new_idx).process_id      := p_processId;
         g_sessionList(v_new_idx).counter_details := 0;
         g_sessionList(v_new_idx).log_level       := p_logLevel;
-        g_sessionList(v_new_idx).tabName_prefix  := p_tabName;
+        g_sessionList(v_new_idx).tabName_master  := p_tabName;
 
         v_index(p_processId) := v_new_idx;
     end;
@@ -391,12 +339,12 @@ create or replace PACKAGE BODY LILA AS
     -- Whatever you want
     function test(p_processId number) return varchar2
     as
-        processRecord t_session_rec;
+        sessionRec t_session_rec;
     begin
 		-- example:
 		-- select pck_logging.test(0) from dual;
-        processRecord := getSessionRecord(p_processId);        
-        return 'prefix: ' ||processRecord.tabName_prefix || '; counter: ' || nvl(processRecord.counter_details, 0) || '; log_level: ' || nvl(processRecord.log_level, 0);
+        sessionRec := getSessionRecord(p_processId);        
+        return 'prefix: ' ||sessionRec.tabName_master || '; counter: ' || nvl(sessionRec.counter_details, 0) || '; log_level: ' || nvl(sessionRec.log_level, 0);
     end;
 
 	------------------------------------------------------------------------------------------------
@@ -410,23 +358,24 @@ create or replace PACKAGE BODY LILA AS
     as 
         pragma autonomous_transaction;
         sqlStatement varchar2(2000);
-        processRecord t_session_rec;
+        sessionRec t_session_rec;
     begin
-        processRecord := getSessionRecord(p_processId);
-        processRecord.counter_details := processRecord.counter_details +1;
-        updateSessionRecord(processRecord);
-
+        sessionRec := getSessionRecord(p_processId);
+        sessionRec.counter_details := sessionRec.counter_details +1;
+        updateSessionRecord(sessionRec);
+        
         sqlStatement := '
-        insert into PH_LILA_DETAIL_TABLE_NAME (
+        insert into PH_DETAIL_TABLE (
             process_id, no, info, log_level,
             session_user, host_name
         )
         values (
-            PH_PROCESS_ID, PH_COUNTER_DETAILS, ''PH_STEP_INFO'', ''PH_LOG_LEVEL'',
-            ''PH_SESSION_USER'', ''PH_HOST_NAME''
+            :PH_PROCESS_ID, :PH_COUNTER_DETAILS, :PH_STEP_INFO, :PH_LOG_LEVEL,
+            :PH_SESSION_USER, :PH_HOST_NAME
         )';
-        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, p_stepInfo, null, null, p_logLevel);
-        execute immediate sqlStatement;
+        sqlStatement := replaceNameDetailTable(sqlStatement, PARAM_DETAIL_TABLE, sessionRec.tabName_master);
+        execute immediate sqlStatement using p_processId, sessionRec.counter_details, p_stepInfo, p_logLevel,
+            SYS_CONTEXT('USERENV','SESSION_USER'), SYS_CONTEXT('USERENV','HOST');
         commit;
     end;
 
@@ -438,23 +387,24 @@ create or replace PACKAGE BODY LILA AS
     as 
         pragma autonomous_transaction;
         sqlStatement varchar2(4000);
-        processRecord t_session_rec;
+        sessionRec t_session_rec;
     begin
-        processRecord := getSessionRecord(p_processId);
-        processRecord.counter_details := processRecord.counter_details +1;
-        updateSessionRecord(processRecord);
+        sessionRec := getSessionRecord(p_processId);
+        sessionRec.counter_details := sessionRec.counter_details +1;
+        updateSessionRecord(sessionRec);
 
         sqlStatement := '
-        insert into PH_LILA_DETAIL_TABLE_NAME (
+        insert into PH_DETAIL_TABLE (
             process_id, no, info, log_level,
             session_user, host_name, err_callstack
         )
         values (
-            PH_PROCESS_ID, PH_COUNTER_DETAILS, ''PH_STEP_INFO'', ''PH_LOG_LEVEL'',
-            ''PH_SESSION_USER'', ''PH_HOST_NAME'', ''PH_ERR_CALLSTACK''
+            :PH_PROCESS_ID, :PH_COUNTER_DETAILS, :PH_STEP_INFO, :PH_LOG_LEVEL,
+            :PH_SESSION_USER, :PH_HOST_NAME, :PH_ERR_CALLSTACK
         )';
-        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, p_stepInfo, null, null, p_logLevel);
-        execute immediate sqlStatement;
+        sqlStatement := replaceNameDetailTable(sqlStatement, PARAM_DETAIL_TABLE, sessionRec.tabName_master);
+        execute immediate sqlStatement using p_processId, sessionRec.counter_details, p_stepInfo, p_logLevel,
+            SYS_CONTEXT('USERENV','SESSION_USER'), SYS_CONTEXT('USERENV','HOST'), DBMS_UTILITY.FORMAT_CALL_STACK;         
         commit;
     end;
 
@@ -466,24 +416,25 @@ create or replace PACKAGE BODY LILA AS
     as 
         pragma autonomous_transaction;
         sqlStatement varchar2(4000);
-        processRecord t_session_rec;
+        sessionRec t_session_rec;
     begin
-        processRecord := getSessionRecord(p_processId);
-        processRecord.counter_details := processRecord.counter_details +1;
-        updateSessionRecord(processRecord);
+        sessionRec := getSessionRecord(p_processId);
+        sessionRec.counter_details := sessionRec.counter_details +1;
+        updateSessionRecord(sessionRec);
 
         sqlStatement := '
-        insert into PH_LILA_DETAIL_TABLE_NAME (
+        insert into PH_DETAIL_TABLE (
             process_id, no, info, log_level,
             session_user, host_name, err_stack, err_backtrace, err_callstack
         )
         values (
-            PH_PROCESS_ID, PH_COUNTER_DETAILS, ''PH_STEP_INFO'', ''PH_LOG_LEVEL'', 
-            ''PH_SESSION_USER'', ''PH_HOST_NAME'', ''PH_ERR_STACK'', ''PH_ERR_BACKTRACE'', ''PH_ERR_CALLSTACK''
+            :PH_PROCESS_ID, :PH_COUNTER_DETAILS, :PH_STEP_INFO, :PH_LOG_LEVEL, 
+            :PH_SESSION_USER, :PH_HOST_NAME, :PH_ERR_STACK, :PH_ERR_BACKTRACE, :PH_ERR_CALLSTACK
         )';
-        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, p_stepInfo, null, null, p_logLevel);
-
-        execute immediate sqlStatement;
+        sqlStatement := replaceNameDetailTable(sqlStatement, PARAM_DETAIL_TABLE, sessionRec.tabName_master);
+        execute immediate sqlStatement using p_processId, sessionRec.counter_details, p_stepInfo, p_logLevel,
+            SYS_CONTEXT('USERENV', 'SESSION_USER'), SYS_CONTEXT('USERENV','HOST'),
+            DBMS_UTILITY.FORMAT_ERROR_STACK, DBMS_UTILITY.FORMAT_ERROR_BACKTRACE, DBMS_UTILITY.FORMAT_CALL_STACK;
         commit;
     end;
 
@@ -555,14 +506,17 @@ create or replace PACKAGE BODY LILA AS
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
+        sessionRec t_session_rec;
     begin
+        sessionRec := getSessionRecord(p_processId);
         sqlStatement := '
-        update PH_LILA_TABLE_NAME
-        set status = PH_STATUS,
+        update PH_MASTER_TABLE
+        set status = :PH_STATUS,
             last_update = current_timestamp
-        where id = PH_PROCESS_ID';   
-        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, p_status, null, null, null, null, null);
-        execute immediate sqlStatement;
+        where id = :PH_PROCESS_ID';  
+        
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
+        execute immediate sqlStatement using p_status, p_processId;
         commit;
     end;
 
@@ -573,15 +527,18 @@ create or replace PACKAGE BODY LILA AS
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
+        sessionRec t_session_rec;
     begin
+        sessionRec := getSessionRecord(p_processId);
         sqlStatement := '
-        update PH_LILA_TABLE_NAME
-        set status = PH_STATUS,
-            info = ''PH_PROCESS_INFO'',
+        update PH_MASTER_TABLE
+        set status = :PH_STATUS,
+            info = :PH_PROCESS_INFO,
             last_update = current_timestamp
-        where id = PH_PROCESS_ID';
-        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, p_status, p_processInfo, null, null, null, null);
-        execute immediate sqlStatement;
+        where id = :PH_PROCESS_ID';
+        
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
+        execute immediate sqlStatement using p_status, p_processInfo, p_processId;
         commit;
     end;
 
@@ -591,15 +548,16 @@ create or replace PACKAGE BODY LILA AS
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
+        sessionRec t_session_rec;
     begin
+        sessionRec := getSessionRecord(p_processId);
         sqlStatement := '
-        update PH_LILA_TABLE_NAME
-        set steps_todo = PH_STEPS_TODO,
+        update PH_MASTER_TABLE
+        set steps_todo = :PH_STEPS_TODO,
             last_update = current_timestamp
-        where id = PH_PROCESS_ID';   
-        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, null, null);
-        sqlStatement := replace(sqlStatement, 'PH_STEPS_TODO', to_char(p_stepsToDo));
-        execute immediate sqlStatement;
+        where id = :PH_PROCESS_ID';   
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
+        execute immediate sqlStatement using p_stepsToDo, p_processId;
         commit;
     end;
 
@@ -609,14 +567,16 @@ create or replace PACKAGE BODY LILA AS
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
+        sessionRec t_session_rec;
     begin
+        sessionRec := getSessionRecord(p_processId);
         sqlStatement := '
-        update PH_LILA_TABLE_NAME
-        set steps_done = PH_STEPS_DONE,
+        update PH_MASTER_TABLE
+        set steps_done = :PH_STEPS_DONE,
             last_update = current_timestamp
-        where id = PH_PROCESS_ID';   
-        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, p_stepsDone, null);
-        execute immediate sqlStatement;
+        where id = :PH_PROCESS_ID';   
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
+        execute immediate sqlStatement using p_stepsDone, p_processId;
         commit;
     end;
 	------------------------------------------------------------------------------------------------
@@ -626,14 +586,15 @@ create or replace PACKAGE BODY LILA AS
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
         lStepCounter number;
+        sessionRec t_session_rec;
     begin
+        sessionRec := getSessionRecord(p_processId);
         sqlStatement := '
         select steps_done
-        from PH_LILA_TABLE_NAME
-        where id = PH_PROCESS_ID';   
-        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, null, null);
-        
-        execute immediate sqlStatement into lStepCounter;
+        from PH_MASTER_TABLE
+        where id = :PH_PROCESS_ID';   
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
+        execute immediate sqlStatement into lStepCounter using p_processId;
         lStepCounter := nvl(lStepCounter, 0) +1;
         set_steps_done(p_processId, lStepCounter);
     end;
@@ -694,19 +655,22 @@ create or replace PACKAGE BODY LILA AS
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
+        sessionRec t_session_rec;
     begin
+        sessionRec := getSessionRecord(p_processId);
         if getSessionRecord(p_processId).process_id is null then
             return;
         end if;
 
 		if getSessionRecord(p_processId).log_level > logLevelSilent then
 	        sqlStatement := '
-	        update PH_LILA_TABLE_NAME
+	        update PH_MASTER_TABLE
 	        set process_end = current_timestamp,
                 last_update = current_timestamp
-	        where id = PH_PROCESS_ID';   
-	        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, null, null, null, null, null, null);
-	        execute immediate sqlStatement;
+	        where id = :PH_PROCESS_ID';
+            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);
+            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
+	        execute immediate sqlStatement using p_processId;
 	        commit;
         end if;
         g_sessionList.delete(p_processId);
@@ -720,41 +684,74 @@ create or replace PACKAGE BODY LILA AS
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
+        sessionRec t_session_rec;
+        sqlCursor number;
+        updateCount number;
     begin
-        if getSessionRecord(p_processId).process_id is null then
+        sessionRec := getSessionRecord(p_processId);
+        if sessionRec.process_id is null then
             return;
         end if;
 
-		if getSessionRecord(p_processId).log_level > logLevelSilent then
+		if sessionRec.log_level > logLevelSilent then
 	        sqlStatement := '
-	        update PH_LILA_TABLE_NAME
+	        update PH_MASTER_TABLE
 	        set process_end = current_timestamp,
                 last_update = current_timestamp';
 
             if p_stepsDone is not null then
-                sqlStatement := sqlStatement || ', steps_done = PH_STEPS_DONE';
+                sqlStatement := sqlStatement || ', steps_done = :PH_STEPS_DONE';
             end if;
             if p_stepsToDo is not null then
-                sqlStatement := sqlStatement || ', steps_todo = PH_STEPS_TO_DO';
+                sqlStatement := sqlStatement || ', steps_todo = :PH_STEPS_TO_DO';
             end if;
             if p_processInfo is not null then
-                sqlStatement := sqlStatement || ', info = ''PH_PROCESS_INFO''';
+                sqlStatement := sqlStatement || ', info = :PH_PROCESS_INFO';
             end if;     
             if p_status is not null then
-                sqlStatement := sqlStatement || ', status = PH_STATUS';
+                sqlStatement := sqlStatement || ', status = :PH_STATUS';
             end if;     
             
-            sqlStatement := sqlStatement || ' where id = PH_PROCESS_ID'; 
-	        sqlStatement := replacePlaceHolders(p_processId, sqlStatement, null, p_status, p_processInfo, null, p_stepsToDo, p_stepsDone, null);
-	        execute immediate sqlStatement;
+            sqlStatement := sqlStatement || ' where id = :PH_PROCESS_ID'; 
+            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);
+            
+            -- due to the variable number of parameters using dbms_sql
+            sqlCursor := DBMS_SQL.OPEN_CURSOR;
+            DBMS_SQL.PARSE(sqlCursor, sqlStatement, DBMS_SQL.NATIVE);
+            DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_PROCESS_ID', p_processId);
+
+            if p_stepsDone is not null then
+                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STEPS_DONE', p_stepsDone);
+            end if;
+            if p_stepsToDo is not null then
+                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STEPS_TO_DO', p_stepsToDo);
+            end if;
+            if p_processInfo is not null then
+                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_PROCESS_INFO', p_processInfo);
+            end if;     
+            if p_status is not null then
+                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STATUS', p_status);
+            end if;     
+
+            updateCount := DBMS_SQL.EXECUTE(sqlCursor);
+            DBMS_SQL.CLOSE_CURSOR(sqlCursor);
 	        commit;
         end if;
+        
+        -- Eintrag aus internem Speicher entfernen
         g_sessionList.delete(p_processId);
+        
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF DBMS_SQL.IS_OPEN(sqlCursor) THEN
+                DBMS_SQL.CLOSE_CURSOR(sqlCursor);
+            END IF;
+
     end;
 
 	------------------------------------------------------------------------------------------------
 
-    function NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNamePrefix VARCHAR2 DEFAULT 'LILA_LOG') return number
+    function NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG') return number
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(600);
@@ -763,17 +760,17 @@ create or replace PACKAGE BODY LILA AS
        -- If silent log mode don't do anything
         if p_logLevel > logLevelSilent then
 	        -- Sicherstellen, dass die LOG-Tabellen existieren
-	        createLogTables(p_tabNamePrefix);
+	        createLogTables(p_TabNameMaster);
         end if;
 
         select seq_lila_log.nextVal into pProcessId from dual;
-        insertSession (p_tabNamePrefix, pProcessId, p_logLevel);
+        insertSession (p_TabNameMaster, pProcessId, p_logLevel);
 
 		if p_logLevel > logLevelSilent then
 	        deleteOldLogs(pProcessId, upper(trim(p_processName)), p_daysToKeep);
 
 	        sqlStatement := '
-	        insert into PH_LILA_TABLE_NAME (
+	        insert into PH_MASTER_TABLE (
 	            id,
 	            process_name,
 	            process_start,
@@ -784,19 +781,19 @@ create or replace PACKAGE BODY LILA AS
 	            status,
 	            info
 	        )
-	        select
-	            PH_PROCESS_ID, 
-	            ''PH_PROCESS_NAME'', 
+	        values (
+	            :PH_PROCESS_ID, 
+	            :PH_PROCESS_NAME, 
 	            current_timestamp,
 				current_timestamp,
                 null,
-	            PH_STEPS_TO_DO, 
+	            :PH_STEPS_TO_DO, 
 	            null,
 	            null,
 	            ''START''
-	        from dual';
-	        sqlStatement := replacePlaceHolders(pProcessId, sqlStatement, p_processName, null, null, null, p_stepsToDo, null, null);
-	        execute immediate sqlStatement;     
+            )';
+            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_TabNameMaster);
+	        execute immediate sqlStatement using pProcessId, p_processName, p_stepsToDo;     
 
 	        commit;
         end if;
@@ -808,7 +805,7 @@ create or replace PACKAGE BODY LILA AS
     -- Opens/starts a new logging session.
     -- The returned process id must be stored within the calling procedure because it is the reference
     -- which is recommended for all following actions (e.g. CLOSE_SESSION, DEBUG, SET_PROCESS_STATUS).
-    function NEW_SESSION(p_processName varchar2, p_logLevel number, p_daysToKeep number, p_tabNamePrefix varchar2 default 'LILA_LOG') return number
+    function NEW_SESSION(p_processName varchar2, p_logLevel number, p_daysToKeep number, p_TabNameMaster varchar2 default 'LILA_LOG') return number
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(600);
@@ -817,17 +814,17 @@ create or replace PACKAGE BODY LILA AS
         -- If silent log mode don't do anything
         if p_logLevel > logLevelSilent then
 	        -- Sicherstellen, dass die LOG-Tabellen existieren
-	        createLogTables(p_tabNamePrefix);
+	        createLogTables(p_TabNameMaster);
         end if;
 
         select seq_lila_log.nextVal into pProcessId from dual;
-        insertSession (p_tabNamePrefix, pProcessId, p_logLevel);
+        insertSession (p_TabNameMaster, pProcessId, p_logLevel);
 
 		if p_logLevel > logLevelSilent then
 	        deleteOldLogs(pProcessId, upper(trim(p_processName)), p_daysToKeep);
 
 	        sqlStatement := '
-	        insert into PH_LILA_TABLE_NAME (
+	        insert into PH_MASTER_TABLE (
 	            id,
 	            process_name,
 	            process_start,
@@ -838,9 +835,9 @@ create or replace PACKAGE BODY LILA AS
 	            status,
 	            info
 	        )
-	        select
-	            PH_PROCESS_ID, 
-	            ''PH_PROCESS_NAME'', 
+            values (
+	            :PH_PROCESS_ID, 
+	            :PH_PROCESS_NAME, 
 	            current_timestamp,
 	            current_timestamp,
 	            null, 
@@ -848,9 +845,9 @@ create or replace PACKAGE BODY LILA AS
 	            null, 
 	            0,
 	            ''START''
-	        from dual';
-	        sqlStatement := replacePlaceHolders(pProcessId, sqlStatement, p_processName, null, null, null, null, null, null);
-	        execute immediate sqlStatement;     
+            )';
+            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_TabNameMaster);
+	        execute immediate sqlStatement using pProcessId, p_processName;     
 
 	        commit;
         end if;
