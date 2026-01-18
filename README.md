@@ -2,7 +2,7 @@
 [![Release](https://img.shields.io/github/v/release/dirkgermany/LILA-Logging)](https://github.com/dirkgermany/LILA-Logging/releases/latest)
 [![Lizenz](https://img.shields.io/github/license/dirkgermany/LILA-Logging)](https://github.com/dirkgermany/LILA-Logging/blob/main/LICENSE)
 [![Größe](https://img.shields.io/github/repo-size/dirkgermany/LILA-Logging)](https://https://github.com/dirkgermany/LILA-Logging)
-[![Sponsor](https://img.shields.io/badge/Sponsor-LILA-orange?style=flat-square&logo=github-sponsors)](https://github.com/sponsors/dirkgermany)
+[![Sponsor](https://img.shields.io/badge/Sponsor-LILA-purple?style=flat-square&logo=github-sponsors)](https://github.com/sponsors/dirkgermany)
 
 
 
