@@ -35,7 +35,7 @@ LILA is developed by a developer who hates over-engineered tools. Focus: 5 minut
 * Only a few API calls are necessary for the complete logging of a process (refer [documentation file "API.md"](docs/API.md))
 * Analysing or monitoring your process requires simple sql statements or API requests
 
-Have a look to the [sample application "learn_lila"](source/sample).
+Have a look to the sample application 'learn_lila' (source/sample).
 
 ---
 ## Logging
