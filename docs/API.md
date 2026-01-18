@@ -158,7 +158,7 @@ The NEW_SESSION function starts the logging session for a process. Two function 
 | p_processName | VARCHAR2| freely selectable name for identifying the process; is written to *master table* | [`M`](#m)
 | p_logLevel | NUMBER | determines the level of detail in *detail table* (see above) | [`M`](#m)
 | p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`N`](#n)
-| p_tabNamePrefix | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#o)
+| p_TabNameMaster | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#o)
 
 *Option 2*
 | Parameter | Type | Description | Required
@@ -167,7 +167,7 @@ The NEW_SESSION function starts the logging session for a process. Two function 
 | p_logLevel | NUMBER | determines the level of detail in *detail table* (see above) | [`M`](#m)
 | p_stepsToDo | NUMBER | defines how many steps must be done during the process | [`M`](#m)
 | p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`N`](#n)
-| p_tabNamePrefix | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#o)
+| p_TabNameMaster | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#o)
 
 **Returns**
 Type: NUMBER
@@ -177,8 +177,8 @@ Description: The new process ID; this ID is required for subsequent calls in ord
 ```sql
 -- Syntax
 ---------
-FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToKeep NUMBER, p_tabNamePrefix VARCHAR2 DEFAULT 'LILA_LOG')
-FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNamePrefix VARCHAR2 DEFAULT 'LILA_LOG')
+FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
+FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
 
 -- Usage
 --------
