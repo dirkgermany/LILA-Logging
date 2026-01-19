@@ -47,6 +47,7 @@ create or replace PACKAGE BODY LILA AS
     exception
         when OTHERS then
             DBMS_OUTPUT.PUT_LINE('DDL-Fehler bei: ' || p_sqlStmt);
+            DBMS_OUTPUT.PUT_LINE(SQLERRM);
             RAISE;
     end;
     
