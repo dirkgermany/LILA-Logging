@@ -24,21 +24,22 @@ LILA is developed by a developer who hates over-engineered tools. Focus: 5 minut
   - [How to monitor](#how-to-monitor)
 
 ## Key features
-1. **Lightweight**: One Package, two Tables, one Sequence. That's it.
+1. **Lightweight**: One Package, two Tables, one Sequence. That's it!
 2. **Concurrent Logging**: Supports multiple, simultaneous log entries from the same or different sessions without blocking
-7. **Monitoring**: You have the option to observe your applications via SQL or by the API
+3. **Monitoring**: You have the option to observe your applications via SQL or via the API
 4. **Data Integrity**: Uses autonomous transactions to guarantee log persistence regardless of the main transaction's outcome
-5. **Smart Context Capture**: Automatically records ERR_STACK,  ERR_BACKTRACE, and ERR_CALLSTACK based on log level—deep insights with zero manual effort.
-8. **Optional self-cleaning**: Automatically purges expired logs per application during session start—no background jobs or schedulers required
+5. **Smart Context Capture**: Automatically records ERR_STACK,  ERR_BACKTRACE, and ERR_CALLSTACK based on log level—deep insights with zero manual effort
+6. **Optional self-cleaning**: Automatically purges expired logs per application during session start—no background jobs or schedulers required
 7. **Future Ready**: Built for the latest Oracle 26ai (2026), and fully tested with existing 19c environment
-8. **Small Footprint**: Under 700 lines of logical PL/SQL code. Easy to audit, fast to compile, and zero bloat
+8. **Small Footprint**: Less than 700 lines of logical PL/SQL code ensures simple quality and security control, fast compilation, zero bloat and minimal Shared Pool utilization (reducing memory pressure and fragmentation)
 
 ## Fast integration
-* Setting up LILA means creating a sequence and a package (refer [documentation file "setup.md"](docs/setup.md))
+* Setting up LILA means creating a package by copy&paste (refer [documentation file "setup.md"](docs/setup.md))
 * Only a few API calls are necessary for the complete logging of a process (refer [documentation file "API.md"](docs/API.md))
 * Analysing or monitoring your process requires simple sql statements or API requests
 
-Have a look to the sample application 'learn_lila' (source/sample).
+>LILA comes ready to test right out of the box, meaning no custom implementation or coding is required to see the framework in action immediately after setup.
+>Also please have a look to the sample application 'learn_lila' (source/sample).
 
 ---
 ## Logging
