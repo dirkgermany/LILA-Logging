@@ -15,7 +15,7 @@ create or replace PACKAGE BODY LILA_DEMO_HTTP AS
         l_processId number (19,0);
     begin
         -- open new log session with a session-/process-name and info level
-        l_processId := lila.new_session('Demo: http_util_pkg', lila.logLevelInfo, null);
+        l_processId := lila.new_session('Demo: http_util_pkg', lila.logLevelInfo);
         
         -- 1. valid call
         lila.info(l_processId, '1. Valid call http_util_pkg.get_cob_from_url');
