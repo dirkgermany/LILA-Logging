@@ -150,9 +150,17 @@ Whenever the record in the *master table* is changed, the value of the field las
 This mechanism is supports the monitoring features.
 
 #### Function NEW_SESSION
-The NEW_SESSION function starts the logging session for a process. Two function signatures are available for different scenarios.
+The NEW_SESSION function starts the logging session for a process. Three function signatures are available for different scenarios.
+Each variant offers the option of choosing a different name for the log tables.
 
 *Option 1*
+| Parameter | Type | Description | Required
+| --------- | ---- | ----------- | -------
+| p_processName | VARCHAR2| freely selectable name for identifying the process; is written to *master table* | [`M`](#m)
+| p_logLevel | NUMBER | determines the level of detail in *detail table* (see above) | [`M`](#m)
+| p_TabNameMaster | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#o)
+
+*Option 2*
 | Parameter | Type | Description | Required
 | --------- | ---- | ----------- | -------
 | p_processName | VARCHAR2| freely selectable name for identifying the process; is written to *master table* | [`M`](#m)
@@ -160,7 +168,7 @@ The NEW_SESSION function starts the logging session for a process. Two function 
 | p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`N`](#n)
 | p_TabNameMaster | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#o)
 
-*Option 2*
+*Option 3*
 | Parameter | Type | Description | Required
 | --------- | ---- | ----------- | -------
 | p_processName | VARCHAR2| freely selectable name for identifying the process; is written to *master table* | [`M`](#m)
@@ -177,6 +185,7 @@ Description: The new process ID; this ID is required for subsequent calls in ord
 ```sql
 -- Syntax
 ---------
+FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
 FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
 FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
 
@@ -184,16 +193,21 @@ FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMB
 --------
 -- Option 1
 -- No deletion of old entries, log table name is 'LILA_LOG'
-gProcessId := lila.new_session('my application', lila.logLevelWarn, null);
+gProcessId := lila.new_session('my application', lila.logLevelWarn);
+-- nearly the same but log table name is 'MY_LOG_TABLE'
+gProcessId := lila.new_session('my application', lila.logLevelWarn, 'MY_LOG_TABLE');
+
+-- Option 2
 -- keep entries which are not older than 30 days
 gProcessId := lila.new_session('my application', lila.logLevelWarn, 30);
 -- use another log table name
-gProcessId := lila.new_session('my application', lila.logLevelWarn, null, 'MY_LOG_TABLE');
+gProcessId := lila.new_session('my application', lila.logLevelWarn, 30, 'MY_LOG_TABLE');
 
--- Option 2
--- likely Option 1 but with information about the steps to be done (100)
-gProcessId := lila.new_session('my application', lila.logLevelWarn, 100, null);
-gProcessId := lila.new_session('my application', lila.logLevelWarn, 100, null, 'MY_LOG_TABLE');
+-- Option 3
+-- with 100 steps to do and 30 days keeping old entries
+gProcessId := lila.new_session('my application', lila.logLevelWarn, 100, 30);
+-- the same but dedicated log table
+gProcessId := lila.new_session('my application', lila.logLevelWarn, 100, 30, 'MY_LOG_TABLE');
 ```
 
 #### Procedure CLOSE_SESSION
