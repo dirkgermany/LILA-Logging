@@ -1,4 +1,4 @@
-# Demo with http_util of Alexandria plsql/sql utility library
+# Demo with http_util of "Alexandria plsql/sql utility library"
 
 ## About
 **LILA: LILA Integrated Logging Architecture**
@@ -8,10 +8,10 @@ This demo shows the integration of lila into the subproject 'http_util'
 of the 'alexandria-plsql-utils' tool collection on GitHub: https://github.com/mortenbra/alexandria-plsql-utils/tree/master/ora.
 
 ## The sample
-At first it calls up a valid web address, then a invalid adress.
-The results of both calls you can see in the tables lila_log and
-lila_log_detail.
-Look at the procedure body and see how few calls are needed for logging.
+At first this sample calls up a valid web address and writes some log entries, immediately after that it calls an invalid adress.
+The results of both calls you can see in the tables lila_log and lila_log_detail.
+
+Have a look to the procedure body and see how few calls are needed for an exact logging.
 
 ## Prerequisites
 To try out this example only some steps must be done before.
@@ -41,14 +41,18 @@ GRANT CREATE TABLE TO USER_NAME;
 GRANT CREATE SESSION TO USER_NAME;
 GRANT EXECUTE ON UTL_HTTP TO USER_NAME;
 ```
+### Create demo package
+1. Copy pl/sql code of both script files (lila_demo_http.pks and lila_demo_http.pkb) into the sql window and execute them.
+   * at first the .pks file
+   * then the .pkb file
 
-## Call web adresses and see log results
+## Try the demo and see log results
 Execution of demo package
 ```sql
 exec lila_demo_http.getBlobFromUrl;
 ```
 
-See log entries
+See log entries. The detailed table contains the backtrace and the error stack.
 ```sql
 -- Process overview with status:
 select * from lila_log;
