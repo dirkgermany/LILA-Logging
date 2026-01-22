@@ -265,9 +265,15 @@ create or replace PACKAGE BODY LILA AS
         where id = :PH_PROCESS_ID';
         
         sessionRec := getSessionRecord(p_processId);
-        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);
-        execute immediate sqlStatement into processRec using p_processId;
+        if sessionRec.process_id is not null then
+            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);
+            execute immediate sqlStatement into processRec using p_processId;
+        end if;
         return processRec;
+        
+    exception
+        when others then
+        return null;
     end;
 
 
@@ -487,20 +493,15 @@ create or replace PACKAGE BODY LILA AS
 	------------------------------------------------------------------------------------------------
 
 	/*
-		Internal methods dedicated to logging
+		Isolation Transactions
 	*/
 
     -- Writes a record to the details log table and marks it with the log level
-    procedure write_detail(p_processId number, p_stepInfo varchar2, p_logLevel number)
+    procedure write_detail(p_processId number, p_tableName varchar2, p_counterDetail number, p_stepInfo varchar2, p_logLevel PLS_INTEGER)
     as 
         pragma autonomous_transaction;
         sqlStatement varchar2(2000);
-        sessionRec t_session_rec;
-    begin
-        sessionRec := getSessionRecord(p_processId);
-        sessionRec.counter_details := sessionRec.counter_details +1;
-        updateSessionRecord(sessionRec);
-        
+    begin        
         sqlStatement := '
         insert into PH_DETAIL_TABLE (
             process_id, no, info, log_level,
@@ -510,31 +511,25 @@ create or replace PACKAGE BODY LILA AS
             :PH_PROCESS_ID, :PH_COUNTER_DETAILS, :PH_STEP_INFO, :PH_LOG_LEVEL,
             :PH_SESSION_USER, :PH_HOST_NAME
         )';
-        sqlStatement := replaceNameDetailTable(sqlStatement, PARAM_DETAIL_TABLE, sessionRec.tabName_master);
-        execute immediate sqlStatement using p_processId, sessionRec.counter_details, p_stepInfo, p_logLevel,
+        sqlStatement := replaceNameDetailTable(sqlStatement, PARAM_DETAIL_TABLE, p_tableName);
+        execute immediate sqlStatement using p_processId, p_counterDetail, p_stepInfo, p_logLevel,
             SYS_CONTEXT('USERENV','SESSION_USER'), SYS_CONTEXT('USERENV','HOST');
         commit;
 
 	exception
 	    when others then
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-
     end;
 
 	------------------------------------------------------------------------------------------------
 
     -- Writes a record to the details log table with debugging infos
     -- Log level of the record is given by p_logLevel
-    procedure write_debug_info(p_processId number, p_stepInfo varchar2, p_logLevel number)
+    procedure write_debug_info(p_processId number, p_tableName varchar2, p_counterDetails number, p_stepInfo varchar2, p_logLevel number)
     as 
         pragma autonomous_transaction;
         sqlStatement varchar2(4000);
-        sessionRec t_session_rec;
     begin
-        sessionRec := getSessionRecord(p_processId);
-        sessionRec.counter_details := sessionRec.counter_details +1;
-        updateSessionRecord(sessionRec);
-
         sqlStatement := '
         insert into PH_DETAIL_TABLE (
             process_id, no, info, log_level,
@@ -544,10 +539,11 @@ create or replace PACKAGE BODY LILA AS
             :PH_PROCESS_ID, :PH_COUNTER_DETAILS, :PH_STEP_INFO, :PH_LOG_LEVEL,
             :PH_SESSION_USER, :PH_HOST_NAME, :PH_ERR_CALLSTACK
         )';
-        sqlStatement := replaceNameDetailTable(sqlStatement, PARAM_DETAIL_TABLE, sessionRec.tabName_master);
-        execute immediate sqlStatement using p_processId, sessionRec.counter_details, p_stepInfo, p_logLevel,
+        sqlStatement := replaceNameDetailTable(sqlStatement, PARAM_DETAIL_TABLE, p_tableName);
+        execute immediate sqlStatement using p_processId, p_counterDetails, p_stepInfo, p_logLevel,
             SYS_CONTEXT('USERENV','SESSION_USER'), SYS_CONTEXT('USERENV','HOST'), DBMS_UTILITY.FORMAT_CALL_STACK;         
         commit;
+        
 	exception
 	    when others then
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
@@ -555,18 +551,36 @@ create or replace PACKAGE BODY LILA AS
 
 	------------------------------------------------------------------------------------------------
 
+    -- Updates the status of a log entry in the main log table.
+    procedure write_process_status(p_processId number, p_tableName varchar2, p_status PLS_INTEGER)
+    as
+        pragma autonomous_transaction;
+        sqlStatement varchar2(500);
+    begin
+        sqlStatement := '
+        update PH_MASTER_TABLE
+        set status = :PH_STATUS,
+            last_update = current_timestamp
+        where id = :PH_PROCESS_ID';  
+        
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_tableName);        
+        execute immediate sqlStatement using p_status, p_processId;
+        commit;
+
+	exception
+	    when others then
+	        rollback; -- Auch im Fehlerfall die Transaktion beenden
+    end;
+ 
+	------------------------------------------------------------------------------------------------
+
     -- Writes a record to the details log table with error infos
     -- Log level of the record is given by p_logLevel
-    procedure write_error_stack(p_processId number, p_stepInfo varchar2, p_logLevel number)
+    procedure write_error_stack(p_processId number, p_tableName varchar2, p_counterDetails number, p_stepInfo varchar2, p_logLevel PLS_INTEGER)
     as 
         pragma autonomous_transaction;
         sqlStatement varchar2(4000);
-        sessionRec t_session_rec;
     begin
-        sessionRec := getSessionRecord(p_processId);
-        sessionRec.counter_details := sessionRec.counter_details +1;
-        updateSessionRecord(sessionRec);
-
         sqlStatement := '
         insert into PH_DETAIL_TABLE (
             process_id, no, info, log_level,
@@ -576,8 +590,8 @@ create or replace PACKAGE BODY LILA AS
             :PH_PROCESS_ID, :PH_COUNTER_DETAILS, :PH_STEP_INFO, :PH_LOG_LEVEL, 
             :PH_SESSION_USER, :PH_HOST_NAME, :PH_ERR_STACK, :PH_ERR_BACKTRACE, :PH_ERR_CALLSTACK
         )';
-        sqlStatement := replaceNameDetailTable(sqlStatement, PARAM_DETAIL_TABLE, sessionRec.tabName_master);
-        execute immediate sqlStatement using p_processId, sessionRec.counter_details, p_stepInfo, p_logLevel,
+        sqlStatement := replaceNameDetailTable(sqlStatement, PARAM_DETAIL_TABLE, p_tableName);
+        execute immediate sqlStatement using p_processId, p_counterDetails, p_stepInfo, p_logLevel,
             SYS_CONTEXT('USERENV', 'SESSION_USER'), SYS_CONTEXT('USERENV','HOST'),
             DBMS_UTILITY.FORMAT_ERROR_STACK, DBMS_UTILITY.FORMAT_ERROR_BACKTRACE, DBMS_UTILITY.FORMAT_CALL_STACK;
         commit;
@@ -587,6 +601,175 @@ create or replace PACKAGE BODY LILA AS
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
     end;
 
+	------------------------------------------------------------------------------------------------
+
+    -- Updates the status and the info field of a log entry in the main log table.
+    procedure write_process_status(p_processId number, p_tableName varchar2, p_status PLS_INTEGER, p_processInfo varchar2)
+    as
+        pragma autonomous_transaction;
+        sqlStatement varchar2(500);
+    begin
+        sqlStatement := '
+        update PH_MASTER_TABLE
+        set status = :PH_STATUS,
+            info = :PH_PROCESS_INFO,
+            last_update = current_timestamp
+        where id = :PH_PROCESS_ID';
+        
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_tableName);        
+        execute immediate sqlStatement using p_status, p_processInfo, p_processId;
+        commit;
+
+	exception
+	    when others then
+	        rollback; -- Auch im Fehlerfall die Transaktion beenden
+    end;
+
+	------------------------------------------------------------------------------------------------
+    
+    procedure write_steps_todo(p_processId number, p_tableName varchar2, p_stepsToDo number)
+    as
+        pragma autonomous_transaction;
+        sqlStatement varchar2(500);
+    begin
+        sqlStatement := '
+        update PH_MASTER_TABLE
+        set steps_todo = :PH_STEPS_TODO,
+            last_update = current_timestamp
+        where id = :PH_PROCESS_ID';   
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_tableName);        
+        execute immediate sqlStatement using p_stepsToDo, p_processId;
+        commit;
+
+	exception
+	    when others then
+	        rollback; -- Auch im Fehlerfall die Transaktion beenden
+    end;
+
+	------------------------------------------------------------------------------------------------
+    
+    procedure write_steps_done(p_processId number, p_tableName varchar2, p_stepsDone number)
+    as
+        pragma autonomous_transaction;
+        sqlStatement varchar2(500);
+    begin
+        sqlStatement := '
+        update PH_MASTER_TABLE
+        set steps_done = :PH_STEPS_DONE,
+            last_update = current_timestamp
+        where id = :PH_PROCESS_ID';   
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_tableName);        
+        execute immediate sqlStatement using p_stepsDone, p_processId;
+        commit;
+
+	exception
+	    when others then
+	        rollback; -- Auch im Fehlerfall die Transaktion beenden
+    end;
+
+	------------------------------------------------------------------------------------------------
+    -- Ends an earlier started logging session by the process ID.
+    -- Important! Ignores if the process doesn't exist! No exception is thrown!
+    procedure write_close_session(p_processId number, p_tableName varchar2, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
+    as
+        pragma autonomous_transaction;
+        sqlStatement varchar2(500);
+        sqlCursor number := null;
+        updateCount number;
+    begin
+        sqlStatement := '
+        update PH_MASTER_TABLE
+        set process_end = current_timestamp,
+            last_update = current_timestamp';
+
+        if p_stepsDone is not null then
+            sqlStatement := sqlStatement || ', steps_done = :PH_STEPS_DONE';
+        end if;
+        if p_stepsToDo is not null then
+            sqlStatement := sqlStatement || ', steps_todo = :PH_STEPS_TO_DO';
+        end if;
+        if p_processInfo is not null then
+            sqlStatement := sqlStatement || ', info = :PH_PROCESS_INFO';
+        end if;     
+        if p_status is not null then
+            sqlStatement := sqlStatement || ', status = :PH_STATUS';
+        end if;     
+        
+        sqlStatement := sqlStatement || ' where id = :PH_PROCESS_ID'; 
+        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_tableName);
+        
+        -- due to the variable number of parameters using dbms_sql
+        sqlCursor := DBMS_SQL.OPEN_CURSOR;
+        DBMS_SQL.PARSE(sqlCursor, sqlStatement, DBMS_SQL.NATIVE);
+        DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_PROCESS_ID', p_processId);
+
+        if p_stepsDone is not null then
+            DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STEPS_DONE', p_stepsDone);
+        end if;
+        if p_stepsToDo is not null then
+            DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STEPS_TO_DO', p_stepsToDo);
+        end if;
+        if p_processInfo is not null then
+            DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_PROCESS_INFO', p_processInfo);
+        end if;     
+        if p_status is not null then
+            DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STATUS', p_status);
+        end if;     
+
+        updateCount := DBMS_SQL.EXECUTE(sqlCursor);
+        DBMS_SQL.CLOSE_CURSOR(sqlCursor);
+
+        commit;
+                
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF DBMS_SQL.IS_OPEN(sqlCursor) THEN
+                DBMS_SQL.CLOSE_CURSOR(sqlCursor);
+            END IF;
+            sqlCursor := null;
+			rollback;
+    end;
+
+	------------------------------------------------------------------------------------------------
+
+    procedure write_new_session(p_processId NUMBER, p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2)
+    as
+        pragma autonomous_transaction;
+        sqlStatement varchar2(600);
+    begin
+	        sqlStatement := '
+	        insert into PH_MASTER_TABLE (
+	            id,
+	            process_name,
+	            process_start,
+				last_update,
+	            process_end,
+	            steps_todo,
+	            steps_done,
+	            status,
+	            info
+	        )
+	        values (
+	            :PH_PROCESS_ID, 
+	            :PH_PROCESS_NAME, 
+	            current_timestamp,
+				current_timestamp,
+                null,
+	            :PH_STEPS_TO_DO, 
+	            null,
+	            null,
+	            ''START''
+            )';
+            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_TabNameMaster);
+	        execute immediate sqlStatement using p_processId, p_processName, p_stepsToDo;     
+	        commit;
+
+	exception
+	    when others then
+	        rollback; -- Auch im Fehlerfall die Transaktion beenden
+    end;
+
+	------------------------------------------------------------------------------------------------
 
     /*
 		Public functions and procedures
@@ -596,9 +779,14 @@ create or replace PACKAGE BODY LILA AS
     -- Details are adjusted to the debug level
     procedure DEBUG(p_processId number, p_stepInfo varchar2)
     as
+        sessionRec t_session_rec;
     begin
+        sessionRec := getSessionRecord(p_processId);
+        sessionRec.counter_details := sessionRec.counter_details +1;
+        updateSessionRecord(sessionRec);
+
         if logLevelDebug <= getSessionRecord(p_processId).log_level then
-            write_debug_info(p_processId, p_stepInfo, logLevelDebug);
+            write_debug_info(p_processId, sessionRec.tabName_master, sessionRec.counter_details, p_stepInfo, logLevelDebug);
         end if;
     end;
 
@@ -620,9 +808,14 @@ create or replace PACKAGE BODY LILA AS
     -- Details are adjusted to the error level
     procedure ERROR(p_processId number, p_stepInfo varchar2)
     as
+        sessionRec t_session_rec;
     begin
+        sessionRec := getSessionRecord(p_processId);
+        sessionRec.counter_details := sessionRec.counter_details +1;
+        updateSessionRecord(sessionRec);
+
         if logLevelError <= getSessionRecord(p_processId).log_level then
-            write_error_stack(p_processId, p_stepInfo, logLevelError);
+            write_error_stack(p_processId, sessionRec.tabName_master, sessionRec.counter_details, p_stepInfo, logLevelError);
         end if;
     end;
 
@@ -644,111 +837,59 @@ create or replace PACKAGE BODY LILA AS
     -- Enables independency of log levels to the calling script.
     procedure LOG_DETAIL(p_processId number, p_stepInfo varchar2, p_logLevel PLS_INTEGER)
     as
+        sessionRec t_session_rec;
     begin
-        write_detail(p_processId, p_stepInfo, p_logLevel);
+        sessionRec := getSessionRecord(p_processId);
+        sessionRec.counter_details := sessionRec.counter_details +1;
+        updateSessionRecord(sessionRec);
+        
+        write_detail(p_processId, sessionRec.tabName_master, sessionRec.counter_details, p_stepInfo, p_logLevel);
     end;
-
+   
 	------------------------------------------------------------------------------------------------
 
-    -- Updates the status of a log entry in the main log table.
     procedure SET_PROCESS_STATUS(p_processId number, p_status PLS_INTEGER)
     as
-        pragma autonomous_transaction;
-        sqlStatement varchar2(500);
         sessionRec t_session_rec;
     begin
         sessionRec := getSessionRecord(p_processId);
-        sqlStatement := '
-        update PH_MASTER_TABLE
-        set status = :PH_STATUS,
-            last_update = current_timestamp
-        where id = :PH_PROCESS_ID';  
-        
-        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
-        execute immediate sqlStatement using p_status, p_processId;
-        commit;
-
-	exception
-	    when others then
-	        rollback; -- Auch im Fehlerfall die Transaktion beenden
+        set_process_status(p_processId, sessionRec.tabName_master, p_status);
     end;
 
 	------------------------------------------------------------------------------------------------
-
-    -- Updates the status and the info field of a log entry in the main log table.
+    
     procedure SET_PROCESS_STATUS(p_processId number, p_status PLS_INTEGER, p_processInfo varchar2)
     as
-        pragma autonomous_transaction;
-        sqlStatement varchar2(500);
         sessionRec t_session_rec;
     begin
         sessionRec := getSessionRecord(p_processId);
-        sqlStatement := '
-        update PH_MASTER_TABLE
-        set status = :PH_STATUS,
-            info = :PH_PROCESS_INFO,
-            last_update = current_timestamp
-        where id = :PH_PROCESS_ID';
-        
-        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
-        execute immediate sqlStatement using p_status, p_processInfo, p_processId;
-        commit;
-
-	exception
-	    when others then
-	        rollback; -- Auch im Fehlerfall die Transaktion beenden
+        write_process_status(p_processId, sessionRec.tabName_master, p_status, p_processInfo);
     end;
 
 	------------------------------------------------------------------------------------------------
     
-    procedure SET_STEPS_TODO(p_processId number, p_stepsToDo number)
-    as
-        pragma autonomous_transaction;
-        sqlStatement varchar2(500);
+     procedure SET_STEPS_TODO(p_processId number, p_stepsToDo number)
+     as
         sessionRec t_session_rec;
-    begin
+     begin
         sessionRec := getSessionRecord(p_processId);
-        sqlStatement := '
-        update PH_MASTER_TABLE
-        set steps_todo = :PH_STEPS_TODO,
-            last_update = current_timestamp
-        where id = :PH_PROCESS_ID';   
-        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
-        execute immediate sqlStatement using p_stepsToDo, p_processId;
-        commit;
-
-	exception
-	    when others then
-	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-    end;
-
+        write_steps_todo(p_processId, sessionRec.tabName_master, p_stepsToDo);
+     end;
+   
 	------------------------------------------------------------------------------------------------
-    
+ 
     procedure SET_STEPS_DONE(p_processId number, p_stepsDone number)
     as
-        pragma autonomous_transaction;
-        sqlStatement varchar2(500);
         sessionRec t_session_rec;
     begin
         sessionRec := getSessionRecord(p_processId);
-        sqlStatement := '
-        update PH_MASTER_TABLE
-        set steps_done = :PH_STEPS_DONE,
-            last_update = current_timestamp
-        where id = :PH_PROCESS_ID';   
-        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
-        execute immediate sqlStatement using p_stepsDone, p_processId;
-        commit;
-
-	exception
-	    when others then
-	        rollback; -- Auch im Fehlerfall die Transaktion beenden
+        write_steps_done(p_processId, sessionRec.tabName_master, p_stepsDone);
     end;
+    
 	------------------------------------------------------------------------------------------------
     
     procedure STEP_DONE(p_processId number)
     as
-        pragma autonomous_transaction;
         sqlStatement varchar2(500);
         lStepCounter number;
         sessionRec t_session_rec;
@@ -758,10 +899,12 @@ create or replace PACKAGE BODY LILA AS
         select steps_done
         from PH_MASTER_TABLE
         where id = :PH_PROCESS_ID';   
+        
         sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);        
         execute immediate sqlStatement into lStepCounter using p_processId;
+        
         lStepCounter := nvl(lStepCounter, 0) +1;
-        set_steps_done(p_processId, lStepCounter);
+        write_steps_done(p_processId, sessionRec.tabName_master, lStepCounter);
     end;
     
 	------------------------------------------------------------------------------------------------
@@ -826,6 +969,8 @@ create or replace PACKAGE BODY LILA AS
         );
     end;
     
+	------------------------------------------------------------------------------------------------
+
     PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_stepsDone NUMBER, p_processInfo VARCHAR2, p_status PLS_INTEGER)
     as
     begin
@@ -838,15 +983,12 @@ create or replace PACKAGE BODY LILA AS
         );
     end;
 
-
+	------------------------------------------------------------------------------------------------
     
     -- Ends an earlier started logging session by the process ID.
     -- Important! Ignores if the process doesn't exist! No exception is thrown!
     procedure CLOSE_SESSION(p_processId number)
     as
---        pragma autonomous_transaction;
---        sqlStatement varchar2(500);
---        sessionRec t_session_rec;
     begin
         close_session(
             p_processId   => p_processId, 
@@ -855,44 +997,13 @@ create or replace PACKAGE BODY LILA AS
             p_processInfo => null, 
             p_status      => null
         );
-        
-        /*
-        sessionRec := getSessionRecord(p_processId);
-        if getSessionRecord(p_processId).process_id is null then
-            return;
-        end if;
-
-		if getSessionRecord(p_processId).log_level > logLevelSilent then
-	        sqlStatement := '
-	        update PH_MASTER_TABLE
-	        set process_end = current_timestamp,
-                last_update = current_timestamp
-	        where id = :PH_PROCESS_ID';
-            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);
-	        execute immediate sqlStatement using p_processId;
-	        commit;
-        end if;
-        g_sessionList.delete(p_processId);
-
-		exception
-		    when others then
-		        if t_rc%isopen then close t_rc; end if;
-		        rollback; -- Auch im Fehlerfall die Transaktion beenden
-
-        */
     end;
 
 	------------------------------------------------------------------------------------------------
 
-    -- Ends an earlier started logging session by the process ID.
-    -- Important! Ignores if the process doesn't exist! No exception is thrown!
     procedure CLOSE_SESSION(p_processId number, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
     as
-        pragma autonomous_transaction;
-        sqlStatement varchar2(500);
         sessionRec t_session_rec;
-        sqlCursor number := null;
-        updateCount number;
     begin
         sessionRec := getSessionRecord(p_processId);
         if sessionRec.process_id is null then
@@ -900,72 +1011,21 @@ create or replace PACKAGE BODY LILA AS
         end if;
 
 		if sessionRec.log_level > logLevelSilent then
-	        sqlStatement := '
-	        update PH_MASTER_TABLE
-	        set process_end = current_timestamp,
-                last_update = current_timestamp';
-
-            if p_stepsDone is not null then
-                sqlStatement := sqlStatement || ', steps_done = :PH_STEPS_DONE';
-            end if;
-            if p_stepsToDo is not null then
-                sqlStatement := sqlStatement || ', steps_todo = :PH_STEPS_TO_DO';
-            end if;
-            if p_processInfo is not null then
-                sqlStatement := sqlStatement || ', info = :PH_PROCESS_INFO';
-            end if;     
-            if p_status is not null then
-                sqlStatement := sqlStatement || ', status = :PH_STATUS';
-            end if;     
+            write_close_session(p_processId, sessionRec.tabName_master, p_stepsToDo, p_stepsDone, p_processInfo, p_status);
             
-            sqlStatement := sqlStatement || ' where id = :PH_PROCESS_ID'; 
-            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, sessionRec.tabName_master);
-            
-            -- due to the variable number of parameters using dbms_sql
-            sqlCursor := DBMS_SQL.OPEN_CURSOR;
-            DBMS_SQL.PARSE(sqlCursor, sqlStatement, DBMS_SQL.NATIVE);
-            DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_PROCESS_ID', p_processId);
-
-            if p_stepsDone is not null then
-                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STEPS_DONE', p_stepsDone);
+            -- Eintrag aus internem Speicher entfernen
+            if v_indexSession.EXISTS(p_processId) then
+                g_sessionList.delete(v_indexSession(p_processId));
+                v_indexSession.delete(p_processId); -- Auch den Index-Eintrag entfernen!
             end if;
-            if p_stepsToDo is not null then
-                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STEPS_TO_DO', p_stepsToDo);
-            end if;
-            if p_processInfo is not null then
-                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_PROCESS_INFO', p_processInfo);
-            end if;     
-            if p_status is not null then
-                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STATUS', p_status);
-            end if;     
 
-            updateCount := DBMS_SQL.EXECUTE(sqlCursor);
-            DBMS_SQL.CLOSE_CURSOR(sqlCursor);
         end if;
-        commit;
-        
-        -- Eintrag aus internem Speicher entfernen
-        g_sessionList.delete(p_processId);
-if v_indexSession.EXISTS(p_processId) then
-    g_sessionList.delete(v_indexSession(p_processId));
-    v_indexSession.delete(p_processId); -- Auch den Index-Eintrag entfernen!
-end if;
-        
-    EXCEPTION
-        WHEN OTHERS THEN
-            IF DBMS_SQL.IS_OPEN(sqlCursor) THEN
-                DBMS_SQL.CLOSE_CURSOR(sqlCursor);
-            END IF;
-            sqlCursor := null;
-			rollback;
     end;
 
 	------------------------------------------------------------------------------------------------
-
-    function NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster VARCHAR2 DEFAULT 'LILA_LOG') return number
+    
+    FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2 default 'LILA_LOG') return number
     as
-        pragma autonomous_transaction;
-        sqlStatement varchar2(600);
         pProcessId number(19,0);
     begin
        -- If silent log mode don't do anything
@@ -979,39 +1039,9 @@ end if;
 
 		if p_logLevel > logLevelSilent and p_daysToKeep is not null then
 	        deleteOldLogs(pProcessId, upper(trim(p_processName)), p_daysToKeep);
-
-	        sqlStatement := '
-	        insert into PH_MASTER_TABLE (
-	            id,
-	            process_name,
-	            process_start,
-				last_update,
-	            process_end,
-	            steps_todo,
-	            steps_done,
-	            status,
-	            info
-	        )
-	        values (
-	            :PH_PROCESS_ID, 
-	            :PH_PROCESS_NAME, 
-	            current_timestamp,
-				current_timestamp,
-                null,
-	            :PH_STEPS_TO_DO, 
-	            null,
-	            null,
-	            ''START''
-            )';
-            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_TabNameMaster);
-	        execute immediate sqlStatement using pProcessId, p_processName, p_stepsToDo;     
-	        commit;
+            write_new_session(pProcessId, p_processName, p_logLevel, p_stepsToDo, p_daysToKeep, p_tabNameMaster);
         end if;
         return pProcessId;
-
-	exception
-	    when others then
-	        rollback; -- Auch im Fehlerfall die Transaktion beenden
     end;
 
 	------------------------------------------------------------------------------------------------
@@ -1033,9 +1063,6 @@ end if;
     -- which is recommended for all following actions (e.g. CLOSE_SESSION, DEBUG, SET_PROCESS_STATUS).
     function NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_daysToKeep number, p_tabNameMaster varchar2 default 'LILA_LOG') return number
     as
---        pragma autonomous_transaction;
---        sqlStatement varchar2(600);
---        pProcessId number(19,0);
     begin
         return new_session(
             p_processName   => p_processName,
@@ -1043,56 +1070,6 @@ end if;
             p_daysToKeep    => p_daysToKeep, 
             p_stepsToDo     => null, 
             p_tabNameMaster => p_tabNameMaster);
-
-    /*    
-        -- If silent log mode don't do anything
-        if p_logLevel > logLevelSilent then
-	        -- Sicherstellen, dass die LOG-Tabellen existieren
-	        createLogTables(p_TabNameMaster);
-        end if;
-
-        select seq_lila_log.nextVal into pProcessId from dual;
-        insertSession (p_TabNameMaster, pProcessId, p_logLevel);
-
-		if p_logLevel > logLevelSilent and p_daysToKeep is not null then
-	        deleteOldLogs(pProcessId, upper(trim(p_processName)), p_daysToKeep);
-
-	        sqlStatement := '
-	        insert into PH_MASTER_TABLE (
-	            id,
-	            process_name,
-	            process_start,
-				last_update,
-	            process_end,
-	            steps_todo,
-	            steps_done,
-	            status,
-	            info
-	        )
-            values (
-	            :PH_PROCESS_ID, 
-	            :PH_PROCESS_NAME, 
-	            current_timestamp,
-	            current_timestamp,
-	            null, 
-	            null,
-	            null, 
-	            0,
-	            ''START''
-            )';
-            sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_TabNameMaster);
-	        execute immediate sqlStatement using pProcessId, p_processName;     
-
-	        commit;
-        end if;
-        return pProcessId;
-
-		exception
-		    when others then
-		        if t_rc%isopen then close t_rc; end if;
-		        rollback; -- Auch im Fehlerfall die Transaktion beenden
-
-    */
     end;
     
 	------------------------------------------------------------------------------------------------
