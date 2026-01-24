@@ -65,8 +65,14 @@ create or replace PACKAGE LILA AS
     PROCEDURE DEBUG(p_processId NUMBER, p_stepInfo VARCHAR2);
     PROCEDURE WARN(p_processId NUMBER, p_stepInfo VARCHAR2);
     PROCEDURE ERROR(p_processId NUMBER, p_stepInfo VARCHAR2);
-
     PROCEDURE LOG_DETAIL(p_processId NUMBER, p_stepInfo VARCHAR2, p_logLevel PLS_INTEGER);
+    
+    -------------
+    -- Monitoring
+    -------------
+    PROCEDURE MARK_STEP(p_processId NUMBER, p_actionName VARCHAR2);
+    FUNCTION GET_METRIC_AVG_DURATION(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER;
+    FUNCTION GET_METRIC_STEPS(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER;
 
     ----------
     -- Testing
