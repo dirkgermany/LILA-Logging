@@ -71,7 +71,12 @@ Ideally, the Log Session begins when the process starts and ends when the proces
 **During** the Log Session this one log entry can be updated and additional informations can be written to the *detail table*.
 **At the end** of a Log Session the log entry again can be updated.
 
-Although the lack of a regular log session termination (e.g., due to an uncaught exception in the calling process) is technically unsound, it does not ultimately lead to any real problems. The only exception is that the end of the process is not logged.
+>**Important Note on Data Persistence:**
+>LILA utilizes high-performance in-memory buffering to minimize database load. Monitoring data and process states are collected in RAM and only persisted to the >database once a threshold (e.g., 100 entries) is reached.
+>
+>**To guarantee full data integrity, calling CLOSE_SESSION at the end of your process is mandatory.**
+>
+>If a process terminates abnormally (e.g., due to an uncaught exception) without reaching CLOSE_SESSION, any data remaining in the buffer since the last automatic >flush will be lost. We strongly recommend including CLOSE_SESSION in your application’s central exception handler.
 
 Ultimately, all that is required for a complete life cycle is to call the NEW_SESSION function at the beginning of the session and the CLOSE_SESSION procedure at the end of the session.
 
