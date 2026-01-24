@@ -155,8 +155,17 @@ Whenever the record in the *master table* is changed, the value of the field las
 This mechanism is supports the monitoring features.
 
 #### Function NEW_SESSION
-The NEW_SESSION function starts the logging session for a process. Three function signatures are available for different scenarios.
-Each variant offers the option of choosing a different name for the log tables.
+The NEW_SESSION function starts the logging session for a process. This procedure must be called first. Calls to the API without a prior NEW_SESSION do not make sense or can (theoretically) lead to undefined states.
+Various function signatures are available for different scenarios. For the NEW_SESSION call exists a dedicated Type:
+
+##### Record Type for init
+TYPE t_session_init IS RECORD (
+    processName VARCHAR2(100),
+    logLevel PLS_INTEGER,
+    stepsToDo PLS_INTEGER,
+    daysToKeep PLS_INTEGER,
+    tabNameMaster VARCHAR2(100) DEFAULT 'LILA_LOG'
+);
 
 \
 *Option 1*
@@ -223,7 +232,19 @@ Ends a logging session with optional final informations. Four function signature
 * Option 1 is a simple close without any additional information about the process.
 * Option 2-4 allows adding various informations to the ending process.
 
+**Persistence & Error Handling**
 
+Since LILA utilizes high-performance buffering, calling CLOSE_SESSION is essential to ensure that all remaining data is flushed and securely written to the database. To prevent data loss during an unexpected application crash, ensure that CLOSE_SESSION is part of your exception handling:
+```sql
+EXCEPTION WHEN OTHERS THEN
+    -- Flushes buffered data and logs the error state before terminating
+    lila.close_session(
+        p_process_id  => l_proc_id, 
+        p_status      => -1,          -- Your custom error status code here
+        p_processInfo => SQLERRM      -- Captures the Oracle error message
+    );
+    RAISE;
+```
 
 *Option 1*
 | Parameter | Type | Description | Required
