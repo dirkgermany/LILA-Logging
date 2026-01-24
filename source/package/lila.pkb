@@ -9,6 +9,7 @@ create or replace PACKAGE BODY LILA AS
         counter_details PLS_INTEGER := 0,
         log_level       PLS_INTEGER := 0,
         steps_done      PLS_INTEGER,
+        monitoring      PLS_INTEGER := 0,
         tabName_master  VARCHAR2(100)
     );
 
@@ -27,8 +28,6 @@ create or replace PACKAGE BODY LILA AS
     TYPE t_monitor_rec IS RECORD (
         process_id      NUMBER(19,0),
         action_name     VARCHAR2(25),
-        steps_done      PLS_INTEGER,
-        max_steps       PLS_INTEGER,
         avg_action_time NUMBER,        -- Umbenannt
         action_time     TIMESTAMP,     -- Startzeitpunkt der Aktion
         used_time       NUMBER,        -- Dauer der letzten Ausführung (in Sek.)
@@ -71,6 +70,22 @@ create or replace PACKAGE BODY LILA AS
         Internal methods.
         Internal methods are written in lowercase and camelCase
     */
+    
+    -- global exception handling
+    function should_raise_error(p_processId number) return boolean
+    as
+    begin
+        -- Die Logik ist hier zentral gekapselt
+        if p_processId is not null and v_indexSession.EXISTS(p_processId) 
+           and g_sessionList(v_indexSession(p_processId)).log_level >= logLevelDebug 
+        then
+            return true;
+        end if;
+        return false;
+    exception
+        when others then return false; -- Sicherheit geht vor
+    end;    
+
     -- run execute immediate with exception handling
     procedure run_sql(p_sqlStmt varchar2)
     as
@@ -104,7 +119,7 @@ create or replace PACKAGE BODY LILA AS
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     function replaceNameDetailTable(p_sqlStatement varchar2, p_placeHolder varchar2, p_tableName varchar2) return varchar2
     as
@@ -112,7 +127,7 @@ create or replace PACKAGE BODY LILA AS
         return replace(p_sqlStatement, p_placeHolder, p_tableName || SUFFIX_DETAIL_NAME);
     end;
     
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     function replaceNameMasterTable(p_sqlStatement varchar2, p_placeHolder varchar2, p_tableName varchar2) return varchar2
     as
@@ -120,13 +135,13 @@ create or replace PACKAGE BODY LILA AS
         return replace(p_sqlStatement, p_placeHolder, p_tableName);
     end;
     
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Creates LOG tables and the sequence for the process IDs if tables or sequence don't exist
     -- For naming rules of the tables see package description
     procedure createLogTables(p_TabNameMaster varchar2)
     as
-        sqlStmt varchar2(500);
+        sqlStmt varchar2(1500);
     begin
         if not objectExists('SEQ_LILA_LOG', 'SEQUENCE') then
             sqlStmt := 'CREATE SEQUENCE SEQ_LILA_LOG MINVALUE 0 MAXVALUE 9999999999999999999999999999 INCREMENT BY 1 START WITH 1 CACHE 10 NOORDER  NOCYCLE  NOKEEP  NOSCALE  GLOBAL';
@@ -197,11 +212,11 @@ create or replace PACKAGE BODY LILA AS
             RAISE;
      end;
      
-	------------------------------------------------------------------------------------------------
-
+	--------------------------------------------------------------------------
     -- Kills log entries depending to their age in days and process name.
     -- Matching of process name is not case sensitive
-	procedure deleteOldLogs(p_processId number, p_processName varchar2, p_daysToKeep number) as
+	procedure deleteOldLogs(p_processId number, p_processName varchar2, p_daysToKeep number)
+    as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
         t_rc SYS_REFCURSOR;
@@ -246,14 +261,16 @@ create or replace PACKAGE BODY LILA AS
 
 	exception
 	    when others then
-	        if t_rc%isopen then close t_rc; end if;
+	        if t_rc%isopen then 
+                close t_rc;
+            end if;
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
 	end;
-
-	------------------------------------------------------------------------------------------------
+    
+	--------------------------------------------------------------------------
 
     function getProcessRecord(p_processId number) return t_process_rec
     as
@@ -284,7 +301,7 @@ create or replace PACKAGE BODY LILA AS
         
     exception
         when others then
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             else
                 return null;
@@ -296,19 +313,52 @@ create or replace PACKAGE BODY LILA AS
         Methods dedicated to the g_monitorList
     */
     
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     -- Flush monitor data to detail table
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
+    procedure persist_monitor_data(
+        p_processId    number,
+        p_target_table varchar2,
+        p_ids          sys.odcinumberlist,
+        p_actions      sys.odcivarchar2list,
+        p_entry_counts sys.odcinumberlist,
+        p_used         sys.odcinumberlist,
+        p_times        sys.odcidatelist
+    )
+    as
+        pragma autonomous_transaction;
+    begin
+        if p_ids.count > 0 then
+            execute immediate 
+                'forall i in 1 .. :1
+                    insert into ' || p_target_table || ' 
+                    (PROCESS_ID, MON_ACTION, MON_STEPS_DONE, MON_USED_TIME, SESSION_TIME, MONITORING)
+                    values (:2(i), :3(i), :4(i), :5(i), :6(i), 1)'
+                using p_ids.count, p_ids, p_actions, p_entry_counts, p_used, p_times;
+            commit;
+        end if;
+        
+    exception
+        when others then
+            rollback;
+            if should_raise_error(p_processId) then
+                raise;
+            end if;
+
+    end;
+
+	--------------------------------------------------------------------------
+
     procedure flushMonitor(p_processId number)
     as
         v_sessionRec  t_session_rec;
         v_targetTable varchar2(150);
         v_key         varchar2(100);
         
-        -- Flache Listen für das FORALL
+        -- Sammlungen für den Datentransfer
         v_ids         sys.odcinumberlist   := sys.odcinumberlist();
         v_actions     sys.odcivarchar2list := sys.odcivarchar2list();
-        v_steps       sys.odcinumberlist   := sys.odcinumberlist();
+        v_entry_counts        sys.odcinumberlist   := sys.odcinumberlist();
         v_used        sys.odcinumberlist   := sys.odcinumberlist();
         v_times       sys.odcidatelist     := sys.odcidatelist();
     begin
@@ -316,37 +366,37 @@ create or replace PACKAGE BODY LILA AS
         if v_sessionRec.tabName_master is null then return; end if;
         v_targetTable := v_sessionRec.tabName_master || '_DETAIL';
     
-        -- 1. Daten sammeln
+        -- SCHRITT 1: Daten aus dem Speicher sammeln (unverändert)
         v_key := g_monitor_groups.FIRST;
         while v_key is not null loop
-            -- Prüfen, ob die Gruppe zum Prozess gehört
             if g_monitor_groups(v_key).COUNT > 0 
                and g_monitor_groups(v_key)(1).process_id = p_processId then
-                
-                -- Historie durchlaufen und nur ungeflushte Einträge nehmen
                 for i in 1 .. g_monitor_groups(v_key).COUNT loop
                     if g_monitor_groups(v_key)(i).is_flushed = 0 then
-                        v_ids.extend;     v_ids(v_ids.last)     := g_monitor_groups(v_key)(i).process_id;
-                        v_actions.extend; v_actions(v_actions.last) := g_monitor_groups(v_key)(i).action_name;
-                        v_steps.extend;   v_steps(v_steps.last)   := g_monitor_groups(v_key)(i).steps_done;
-                        v_used.extend;    v_used(v_used.last)    := g_monitor_groups(v_key)(i).used_time;
-                        v_times.extend;   v_times(v_times.last)   := cast(g_monitor_groups(v_key)(i).action_time as date);
+                        v_ids.extend;           v_ids(v_ids.last) := g_monitor_groups(v_key)(i).process_id;
+                        v_actions.extend;       v_actions(v_actions.last) := g_monitor_groups(v_key)(i).action_name;
+                        v_entry_counts.extend;  v_entry_counts(v_entry_counts.last) := g_monitor_groups(v_key)(i).entry_count;
+                        v_used.extend;          v_used(v_used.last) := g_monitor_groups(v_key)(i).used_time;
+                        v_times.extend;         v_times(v_times.last) := cast(g_monitor_groups(v_key)(i).action_time as date);
                     end if;
                 end loop;
             end if;
             v_key := g_monitor_groups.NEXT(v_key);
         end loop;
     
-        -- 2. Dynamischer Bulk-Insert (nur wenn neue Daten da sind)
+        -- SCHRITT 2: Autonome Persistierung aufrufen
         if v_ids.COUNT > 0 then
-            execute immediate 
-                'forall i in 1 .. :1
-                    insert into ' || v_targetTable || ' 
-                    (PROCESS_ID, MON_ACTION, MON_STEPS_DONE, MON_USED_TIME, SESSION_TIME, MONITORING)
-                    values (:2(i), :3(i), :4(i), :5(i), :6(i), 1)'
-                using v_ids.COUNT, v_ids, v_actions, v_steps, v_used, v_times;
+            persist_monitor_data(
+                p_processId    => p_processId,
+                p_target_table => v_targetTable,
+                p_ids          => v_ids,
+                p_actions      => v_actions,
+                p_entry_counts => v_entry_counts,
+                p_used         => v_used,
+                p_times        => v_times
+            );
     
-            -- 3. Markieren als geflusht (nach Erfolg!)
+            -- SCHRITT 3: Im Speicher als geflusht markieren (unverändert)
             v_key := g_monitor_groups.FIRST;
             while v_key is not null loop
                 if g_monitor_groups(v_key).COUNT > 0 
@@ -358,11 +408,18 @@ create or replace PACKAGE BODY LILA AS
                 v_key := g_monitor_groups.NEXT(v_key);
             end loop;
         end if;
-    end;
+        
+    exception
+        when others then
+            rollback;
+            if should_raise_error(p_processId) then
+                RAISE;
+            end if;
+    end;    
     
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     -- Hilfsfunktion (intern): Erzeugt den einheitlichen Key für den Index
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     function buildMonitorKey(p_processId number, p_actionName varchar2) return varchar2
     is
     begin
@@ -370,9 +427,9 @@ create or replace PACKAGE BODY LILA AS
         return to_char(p_processId) || '_' || p_actionName;
     end;
 
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     -- Delivers a record of the monitor list by process_id and action_name
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     function get_ms_diff(p_start timestamp, p_end timestamp) return number is
         v_diff interval day to second;
     begin
@@ -385,12 +442,12 @@ create or replace PACKAGE BODY LILA AS
               + extract(second from v_diff)) * 1000;
     end;
     
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     -- Performance Ermittlung zu einer Action
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     function getCurrentAvgTime(p_processId number, p_actionName varchar2) return number
     is
-        v_key constant varchar2(100) := to_char(p_processId) || '_' || p_actionName;
+        v_key constant varchar2(100) := buildMonitorKey(p_processId, p_actionName);
     begin
         -- Direkter Zugriff auf den flachen Cache
         if v_cache_avg.EXISTS(v_key) then
@@ -399,17 +456,12 @@ create or replace PACKAGE BODY LILA AS
         return 0;
     end;
 
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     -- Creating and adding/updating a record in the monitor list
-    ------------------------------------------------------------------------------------------------
-    procedure insertMonitor (
-        p_processId   number, 
-        p_actionName  varchar2, 
-        p_steps_done  number, 
-        p_max_steps   number
-    )
+    --------------------------------------------------------------------------
+    procedure insertMonitor (p_processId number, p_actionName varchar2)
     as
-        v_key        constant varchar2(100) := to_char(p_processId) || '_' || p_actionName;
+        v_key        constant varchar2(100) := buildMonitorKey(p_processId, p_actionName);
         v_now        constant timestamp := systimestamp;
         v_used_time  number := 0;
         v_new_avg    number := 0;
@@ -419,10 +471,10 @@ create or replace PACKAGE BODY LILA AS
     begin
         -- 1. Schnelle Berechnung über Cache (kein Array-Zugriff!)
         if v_cache_last.EXISTS(v_key) then
-            -- Jetzt in Millisekunden
+            -- in Millisekunden
             v_used_time := get_ms_diff(v_cache_last(v_key), v_now); 
             v_new_count := v_cache_count(v_key) + 1;
-                    -- Gleitender Durchschnitt: ((alt * count) + neu) / (count + 1)
+            -- Gleitender Durchschnitt: ((alt * count) + neu) / (count + 1)
             v_new_avg   := ((v_cache_avg(v_key) * v_cache_count(v_key)) + v_used_time) / v_new_count;
         else
             v_used_time := null; -- Erster Eintrag
@@ -448,8 +500,6 @@ create or replace PACKAGE BODY LILA AS
         -- Neuen Record füllen
         v_new_rec.process_id      := p_processId;
         v_new_rec.action_name     := p_actionName;
-        v_new_rec.steps_done      := p_steps_done;
-        v_new_rec.max_steps       := p_max_steps;
         v_new_rec.action_time     := v_now;
         v_new_rec.used_time       := v_used_time;
         v_new_rec.avg_action_time := v_new_avg;
@@ -467,20 +517,15 @@ create or replace PACKAGE BODY LILA AS
         end if;
         
     exception
-        when others then       -- Nur Raisen, wenn wir im Debug-Modus sind UND die Session kennen
-            if p_processId is not null 
-               and v_indexSession.EXISTS(p_processId) 
-               and g_sessionList(v_indexSession(p_processId)).log_level >= logLevelDebug 
-            then
+        when others then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
-            -- Im Produktionsmodus: Fehler verschlucken, Hauptprozess darf nicht sterben.
-
     end;
 
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     -- Removing a record from monitor list
-    ------------------------------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     procedure removeMonitor(p_processId number, p_actionName varchar2)
     as
         v_key constant varchar2(100) := buildMonitorKey(p_processId, p_actionName);
@@ -496,7 +541,82 @@ create or replace PACKAGE BODY LILA AS
         v_cache_count.DELETE(v_key);
     end;
 
+    --------------------------------------------------------------------------
+    -- Removing a record from monitor list
+    --------------------------------------------------------------------------
+    function getLastMonitorEntry(p_processId number, p_actionName varchar2) return t_monitor_rec
+    as
+        v_key    constant varchar2(100) := buildMonitorKey(p_processId, p_actionName);
+        v_empty  t_monitor_rec; -- Initial leerer Record als Fallback
+    begin
+        -- 1. Prüfen, ob die Gruppe (Action) im Cache existiert
+        if g_monitor_groups.EXISTS(v_key) then
+            -- 2. Prüfen, ob die Historie-Liste Einträge hat
+            if g_monitor_groups(v_key).COUNT > 0 then
+                -- Den letzten Eintrag (LAST) der verschachtelten Liste zurückgeben
+                return g_monitor_groups(v_key)(g_monitor_groups(v_key).LAST);
+            end if;
+        end if;
+    
+        -- Falls nichts gefunden wurde, wird ein leerer Record zurückgegeben
+        return v_empty;
+    
+    exception
+        when others then
+            -- Hier nutzen wir deine neue zentrale Fehler-Logik
+            if should_raise_error(p_processId) then
+                raise;
+            end if;
+            return v_empty;
+    end;
 
+    function hasMonitorEntry(p_processId number, p_actionName varchar2) return boolean
+    is
+        v_key constant varchar2(100) := buildMonitorKey(p_processId, p_actionName);
+    begin
+        if not g_monitor_groups.EXISTS(v_key) then
+            return false;
+        end if;
+        return (g_monitor_groups(v_key).COUNT > 0);
+    
+    exception
+        when others then
+            if should_raise_error(p_processId) then
+                raise;
+            end if;
+            return false;
+    end;
+    
+    --------------------------------------------------------------------------
+    -- Removing a record from monitor list
+    --------------------------------------------------------------------------
+    PROCEDURE MARK_STEP(p_processId NUMBER, p_actionName VARCHAR2)
+    as
+    begin
+        insertMonitor (p_processId, p_actionName);     
+    end;
+
+    --------------------------------------------------------------------------
+
+    FUNCTION GET_METRIC_AVG_DURATION(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER
+    as
+        v_rec t_monitor_rec;
+    begin
+        v_rec := getLastMonitorEntry(p_processId, p_actionName);
+        RETURN nvl(v_rec.avg_action_time, 0);
+    end;
+    
+    --------------------------------------------------------------------------
+
+    FUNCTION GET_METRIC_STEPS(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER
+    as
+        v_rec t_monitor_rec;
+    begin
+        v_rec := getLastMonitorEntry(p_processId, p_actionName);
+        RETURN nvl(v_rec.entry_count, 0);
+    end;
+    
+    
     /*
 		Methods dedicated to the g_sessionList
 	*/
@@ -521,7 +641,7 @@ create or replace PACKAGE BODY LILA AS
 
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Set values of a stored record in the internal process list by a given record
     procedure updateSessionRecord(p_sessionRecord t_session_rec)
@@ -532,7 +652,7 @@ create or replace PACKAGE BODY LILA AS
         g_sessionList(listIndex) := p_sessionRecord;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- removes a record from the internal process list
     procedure removeSession(p_processId number)
@@ -551,7 +671,7 @@ create or replace PACKAGE BODY LILA AS
         end if;       
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Creating and adding a new record to the process list
     procedure insertSession (p_tabName varchar2, p_processId number, p_logLevel PLS_INTEGER)
@@ -579,7 +699,7 @@ create or replace PACKAGE BODY LILA AS
         v_indexSession(p_processId) := v_new_idx;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Whatever you want
     function test(p_processId number) return varchar2
@@ -592,14 +712,14 @@ create or replace PACKAGE BODY LILA AS
         return 'prefix: ' ||sessionRec.tabName_master || '; counter: ' || nvl(sessionRec.counter_details, 0) || '; log_level: ' || nvl(sessionRec.log_level, 0);
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
 	/*
 		Isolation Transactions
 	*/
 
     -- Writes a record to the details log table and marks it with the log level
-    procedure write_detail(p_processId number, p_tableName varchar2, p_counterDetail number, p_stepInfo varchar2, p_logLevel PLS_INTEGER)
+    procedure persist_detail(p_processId number, p_tableName varchar2, p_counterDetail number, p_stepInfo varchar2, p_logLevel PLS_INTEGER)
     as 
         pragma autonomous_transaction;
         sqlStatement varchar2(2000);
@@ -621,16 +741,16 @@ create or replace PACKAGE BODY LILA AS
 	exception
 	    when others then
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Writes a record to the details log table with debugging infos
     -- Log level of the record is given by p_logLevel
-    procedure write_debug_info(p_processId number, p_tableName varchar2, p_counterDetails number, p_stepInfo varchar2, p_logLevel number)
+    procedure persist_debug_info(p_processId number, p_tableName varchar2, p_counterDetails number, p_stepInfo varchar2, p_logLevel number)
     as 
         pragma autonomous_transaction;
         sqlStatement varchar2(4000);
@@ -652,15 +772,15 @@ create or replace PACKAGE BODY LILA AS
 	exception
 	    when others then
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Updates the status of a log entry in the main log table.
-    procedure write_process_status(p_processId number, p_tableName varchar2, p_status PLS_INTEGER)
+    procedure persist_process_status(p_processId number, p_tableName varchar2, p_status PLS_INTEGER)
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
@@ -678,15 +798,15 @@ create or replace PACKAGE BODY LILA AS
 	exception
 	    when others then
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
     end;
  
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Updates the status and the info field of a log entry in the main log table.
-    procedure write_process_status(p_processId number, p_tableName varchar2, p_status PLS_INTEGER, p_processInfo varchar2)
+    procedure persist_process_status(p_processId number, p_tableName varchar2, p_status PLS_INTEGER, p_processInfo varchar2)
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
@@ -705,16 +825,16 @@ create or replace PACKAGE BODY LILA AS
 	exception
 	    when others then
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Writes a record to the details log table with error infos
     -- Log level of the record is given by p_logLevel
-    procedure write_error_stack(p_processId number, p_tableName varchar2, p_counterDetails number, p_stepInfo varchar2, p_logLevel PLS_INTEGER)
+    procedure persist_error_stack(p_processId number, p_tableName varchar2, p_counterDetails number, p_stepInfo varchar2, p_logLevel PLS_INTEGER)
     as 
         pragma autonomous_transaction;
         sqlStatement varchar2(4000);
@@ -737,14 +857,14 @@ create or replace PACKAGE BODY LILA AS
 	exception
 	    when others then
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     
-    procedure write_steps_todo(p_processId number, p_tableName varchar2, p_stepsToDo number)
+    procedure persist_steps_todo(p_processId number, p_tableName varchar2, p_stepsToDo number)
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
@@ -761,14 +881,14 @@ create or replace PACKAGE BODY LILA AS
 	exception
 	    when others then
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     
-    procedure write_steps_done(p_processId number, p_tableName varchar2, p_stepsDone number)
+    procedure persist_steps_done(p_processId number, p_tableName varchar2, p_stepsDone number)
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
@@ -785,15 +905,15 @@ create or replace PACKAGE BODY LILA AS
 	exception
 	    when others then
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     -- Ends an earlier started logging session by the process ID.
     -- Important! Ignores if the process doesn't exist! No exception is thrown!
-    procedure write_close_session(p_processId number, p_tableName varchar2, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
+    procedure persist_close_session(p_processId number, p_tableName varchar2, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(500);
@@ -851,14 +971,14 @@ create or replace PACKAGE BODY LILA AS
             END IF;
             sqlCursor := null;
 			rollback;
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
-    procedure write_new_session(p_processId NUMBER, p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2)
+    procedure persist_new_session(p_processId NUMBER, p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2)
     as
         pragma autonomous_transaction;
         sqlStatement varchar2(600);
@@ -893,12 +1013,12 @@ create or replace PACKAGE BODY LILA AS
 	exception
 	    when others then
 	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-            if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
+            if should_raise_error(p_processId) then
                 RAISE;
             end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     /*
 		Public functions and procedures
@@ -913,11 +1033,11 @@ create or replace PACKAGE BODY LILA AS
         if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
             v_idx := v_indexSession(p_processId);
             g_sessionList(v_idx).counter_details := g_sessionList(v_idx).counter_details + 1;        
-            write_debug_info(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).counter_details, p_stepInfo, logLevelDebug);
+            persist_debug_info(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).counter_details, p_stepInfo, logLevelDebug);
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Used by external Procedure to write a new log entry with log level INFO
     -- Details are adjusted to the info level
@@ -927,7 +1047,7 @@ create or replace PACKAGE BODY LILA AS
         log_detail(p_processId, p_stepInfo, logLevelInfo);
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Used by external Procedure to write a new log entry with log level ERROR
     -- Details are adjusted to the error level
@@ -938,11 +1058,11 @@ create or replace PACKAGE BODY LILA AS
         if v_indexSession.EXISTS(p_processId) and logLevelError <= g_sessionList(v_indexSession(p_processId)).log_level then
             v_idx := v_indexSession(p_processId);
             g_sessionList(v_idx).counter_details := g_sessionList(v_idx).counter_details +1;
-            write_error_stack(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).counter_details, p_stepInfo, logLevelError);
+            persist_error_stack(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).counter_details, p_stepInfo, logLevelError);
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Used by external Procedure to write a new log entry with log level WARN
     -- Details are adjusted to the warn level
@@ -952,7 +1072,7 @@ create or replace PACKAGE BODY LILA AS
         log_detail(p_processId, p_stepInfo, logLevelWarn);
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     -- Writes data to the log detail table.
     -- Enables independency of log levels to the calling script.
@@ -963,11 +1083,11 @@ create or replace PACKAGE BODY LILA AS
        if v_indexSession.EXISTS(p_processId) and logLevelError <= g_sessionList(v_indexSession(p_processId)).log_level then
             v_idx := v_indexSession(p_processId);
             g_sessionList(v_idx).counter_details := g_sessionList(v_idx).counter_details +1;
-            write_detail(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).counter_details, p_stepInfo, p_logLevel);
+            persist_detail(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).counter_details, p_stepInfo, p_logLevel);
         end if;
     end;
      
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     procedure SET_PROCESS_STATUS(p_processId number, p_status PLS_INTEGER, p_processInfo varchar2)
     as
@@ -975,11 +1095,11 @@ create or replace PACKAGE BODY LILA AS
     begin
        if v_indexSession.EXISTS(p_processId) then
             v_idx := v_indexSession(p_processId);
-            write_process_status(p_processId, g_sessionList(v_idx).tabName_master, p_status, p_processInfo);
+            persist_process_status(p_processId, g_sessionList(v_idx).tabName_master, p_status, p_processInfo);
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     procedure SET_PROCESS_STATUS(p_processId number, p_status PLS_INTEGER)
     as
@@ -987,11 +1107,11 @@ create or replace PACKAGE BODY LILA AS
     begin
        if v_indexSession.EXISTS(p_processId) then
             v_idx := v_indexSession(p_processId);
-            write_process_status(p_processId, g_sessionList(v_idx).tabName_master, p_status);
+            persist_process_status(p_processId, g_sessionList(v_idx).tabName_master, p_status);
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     
      procedure SET_STEPS_TODO(p_processId number, p_stepsToDo number)
      as
@@ -999,11 +1119,11 @@ create or replace PACKAGE BODY LILA AS
      begin
        if v_indexSession.EXISTS(p_processId) then
             v_idx := v_indexSession(p_processId);
-            write_steps_todo(p_processId, g_sessionList(v_idx).tabName_master, p_stepsToDo);
+            persist_steps_todo(p_processId, g_sessionList(v_idx).tabName_master, p_stepsToDo);
         end if;
      end;
    
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
  
     procedure SET_STEPS_DONE(p_processId number, p_stepsDone number)
     as
@@ -1012,12 +1132,12 @@ create or replace PACKAGE BODY LILA AS
         if v_indexSession.EXISTS(p_processId) then
             v_idx := v_indexSession(p_processId);
             g_sessionList(v_idx).counter_details := p_stepsDone;        
-             write_steps_done(p_processId, g_sessionList(v_idx).tabName_master, p_stepsDone);
+             persist_steps_done(p_processId, g_sessionList(v_idx).tabName_master, p_stepsDone);
        end if;
 
     end;
     
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     
     procedure STEP_DONE(p_processId number)
     as
@@ -1028,11 +1148,11 @@ create or replace PACKAGE BODY LILA AS
         if v_indexSession.EXISTS(p_processId) then
             v_idx := v_indexSession(p_processId);
             g_sessionList(v_idx).counter_details := g_sessionList(v_idx).counter_details + 1;        
-            write_steps_done(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).counter_details);
+            persist_steps_done(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).counter_details);
         end if;
     end;
     
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     
     FUNCTION GET_PROCESS_DATA(p_processId NUMBER) return t_process_rec
     as
@@ -1052,7 +1172,7 @@ create or replace PACKAGE BODY LILA AS
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     FUNCTION GET_STEPS_TODO(p_processId NUMBER) return PLS_INTEGER
     as
@@ -1063,7 +1183,7 @@ create or replace PACKAGE BODY LILA AS
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     
     function GET_PROCESS_START(p_processId NUMBER) return timestamp
     as
@@ -1074,7 +1194,7 @@ create or replace PACKAGE BODY LILA AS
         end if;
     end;
     
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     
     function GET_PROCESS_END(p_processId NUMBER) return timestamp
     as
@@ -1085,7 +1205,7 @@ create or replace PACKAGE BODY LILA AS
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     function GET_PROCESS_STATUS(p_processId number) return PLS_INTEGER
     as 
@@ -1096,7 +1216,7 @@ create or replace PACKAGE BODY LILA AS
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     function GET_PROCESS_INFO(p_processId number) return varchar2
     as 
@@ -1107,7 +1227,7 @@ create or replace PACKAGE BODY LILA AS
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     
     PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_processInfo VARCHAR2, p_status PLS_INTEGER)
     as
@@ -1121,7 +1241,7 @@ create or replace PACKAGE BODY LILA AS
         );
     end;
     
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_stepsDone NUMBER, p_processInfo VARCHAR2, p_status PLS_INTEGER)
     as
@@ -1135,7 +1255,7 @@ create or replace PACKAGE BODY LILA AS
         );
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     
     -- Ends an earlier started logging session by the process ID.
     -- Important! Ignores if the process doesn't exist! No exception is thrown!
@@ -1151,18 +1271,18 @@ create or replace PACKAGE BODY LILA AS
         );
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     procedure CLOSE_SESSION(p_processId number, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
     as
         v_idx PLS_INTEGER;
-   begin
+    begin
         if v_indexSession.EXISTS(p_processId) then
             flushMonitor(p_processId);
             if  logLevelSilent <= g_sessionList(v_indexSession(p_processId)).log_level then
                 v_idx := v_indexSession(p_processId);
                 g_sessionList(v_idx).counter_details := p_stepsDone;        
-                write_close_session(p_processId,  g_sessionList(v_idx).tabName_master, p_stepsToDo, p_stepsDone, p_processInfo, p_status);
+                persist_close_session(p_processId,  g_sessionList(v_idx).tabName_master, p_stepsToDo, p_stepsDone, p_processInfo, p_status);
                 
                 -- Eintrag aus internem Speicher entfernen
                 g_sessionList.delete(v_indexSession(p_processId));
@@ -1171,7 +1291,7 @@ create or replace PACKAGE BODY LILA AS
         end if;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
     
     FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2 default 'LILA_LOG') return number
     as
@@ -1188,12 +1308,12 @@ create or replace PACKAGE BODY LILA AS
 
 		if p_logLevel > logLevelSilent and p_daysToKeep is not null then
 	        deleteOldLogs(pProcessId, upper(trim(p_processName)), p_daysToKeep);
-            write_new_session(pProcessId, p_processName, p_logLevel, p_stepsToDo, p_daysToKeep, p_tabNameMaster);
+            persist_new_session(pProcessId, p_processName, p_logLevel, p_stepsToDo, p_daysToKeep, p_tabNameMaster);
         end if;
         return pProcessId;
     end;
 
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     function NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_tabNameMaster varchar2 default 'LILA_LOG') return number
     as
@@ -1221,7 +1341,7 @@ create or replace PACKAGE BODY LILA AS
             p_tabNameMaster => p_tabNameMaster);
     end;
     
-	------------------------------------------------------------------------------------------------
+	--------------------------------------------------------------------------
 
     PROCEDURE IS_ALIVE
     as
