@@ -29,7 +29,6 @@ create or replace PACKAGE BODY LILA AS
     g_master_dirty_count PLS_INTEGER := 0; 
     g_flush_process_threshold CONSTANT PLS_INTEGER := 100;
 
-
     ---------------------------------------------------------------
     -- Monitoring
     ---------------------------------------------------------------
@@ -62,6 +61,34 @@ create or replace PACKAGE BODY LILA AS
     g_max_entries_per_monitor_action CONSTANT PLS_INTEGER := 1000; -- Max. Anzahl Einträge für eine Aktion je Action
     g_monitor_dirty_count PLS_INTEGER := 0; -- Zähler für die Monitoreinträge im Speicher
     g_flush_monitor_threshold CONSTANT PLS_INTEGER := 100; -- Max. Anzahl Monitoreinträge für das Flush
+    
+    
+    ---------------------------------------------------------------
+    -- Logging
+    ---------------------------------------------------------------
+    TYPE t_log_buffer_rec IS RECORD (
+        process_id      NUMBER(19,0),
+        log_level       PLS_INTEGER,
+        log_text        VARCHAR2(4000),
+        log_time        TIMESTAMP,
+        serial_no       PLS_INTEGER,
+        err_stack       VARCHAR2(4000),
+        err_backtrace   VARCHAR2(4000),
+        err_callstack   VARCHAR2(4000)
+    );
+    
+    -- Die Liste für den Bulk-Speicher
+    -- Die flache Liste der Log-Einträge
+    TYPE t_log_history_tab IS TABLE OF t_log_buffer_rec;
+    
+    -- Das Haupt-Objekt für Logs: 
+    -- Key ist hier die process_id (als String gewandelt für die Map)
+    TYPE t_log_map IS TABLE OF t_log_history_tab INDEX BY VARCHAR2(100);
+    g_log_groups t_log_map;
+    
+    -- Steuerungsvariablen (Analog zum Monitoring)
+    g_log_dirty_count PLS_INTEGER := 0; 
+    g_flush_log_threshold CONSTANT PLS_INTEGER := 100;
     
     ---------------------------------------------------------------
     -- Placeholders for tables
@@ -345,9 +372,12 @@ create or replace PACKAGE BODY LILA AS
                 forall i in 1 .. p_ids.count
                     execute immediate 
                     'insert into ' || p_target_table || ' 
-                    (PROCESS_ID, MON_ACTION, MON_STEPS_DONE, MON_USED_MILLIS, MON_AVG_MILLIS, SESSION_TIME, MONITORING)
-                    values (:1, :2, :3, :4, :5, :6, 1)'
-                using p_ids(i), p_actions(i), p_entry_counts(i), p_used(i), p_avgs(i), p_times(i);
+                    (PROCESS_ID, MON_ACTION, MON_STEPS_DONE, MON_USED_MILLIS, MON_AVG_MILLIS, SESSION_TIME, MONITORING, SESSION_USER, HOST_NAME)
+                    values (:1, :2, :3, :4, :5, :6, 1, :7, :8)'
+                using p_ids(i), p_actions(i), p_entry_counts(i), p_used(i), p_avgs(i), p_times(i),
+                    SYS_CONTEXT('USERENV','SESSION_USER'), SYS_CONTEXT('USERENV','HOST')
+                
+                ;
             commit;
         end if;
         
@@ -623,6 +653,8 @@ create or replace PACKAGE BODY LILA AS
             return v_empty;
     end;
 
+    ----------------------------------------------------------------------
+    
     function hasMonitorEntry(p_processId number, p_actionName varchar2) return boolean
     is
         v_key constant varchar2(100) := buildMonitorKey(p_processId, p_actionName);
@@ -673,6 +705,43 @@ create or replace PACKAGE BODY LILA AS
     /*
 		Methods dedicated to the g_sessionList
 	*/
+    
+    --------------------------------------------------------------------------
+    -- Flush monitor data to detail table
+    --------------------------------------------------------------------------
+    procedure persist_log_data(
+        p_processId    number,
+        p_target_table varchar2,
+        p_seqs         sys.odcinumberlist,
+        p_levels       sys.odcinumberlist,
+        p_texts        sys.odcivarchar2list,
+        p_times        sys.odcidatelist,
+        p_stacks       sys.odcivarchar2list,
+        p_backtraces   sys.odcivarchar2list,
+        p_callstacks   sys.odcivarchar2list
+    )    
+    as
+        pragma autonomous_transaction;
+    begin
+        -- Bulk-Insert über alle gesammelten Log-Einträge
+        forall i in 1 .. p_levels.count
+            execute immediate 
+                'insert into ' || p_target_table || ' 
+                (PROCESS_ID, LOG_LEVEL, INFO, SESSION_TIME, NO, ERR_STACK, ERR_BACKTRACE, ERR_CALLSTACK, SESSION_USER, HOST_NAME)
+                values (:1, :2, :3, :4, :5, :6, :7, :8, :9, :10)'
+            USING p_processId, p_levels(i), p_texts(i), p_times(i), p_seqs(i), p_stacks(i), p_backtraces(i), p_callstacks(i),
+            SYS_CONTEXT('USERENV','SESSION_USER'), SYS_CONTEXT('USERENV','HOST');
+        commit;
+        
+    exception
+        when others then
+            rollback;
+            if should_raise_error(p_processId) then
+                raise;
+            end if;
+
+    end;
+
 
     -- Delivers a record of the internal list which belongs to the process id
     -- Return value is NULL BUT! datatype RECORD cannot be validated by IS NULL.
@@ -695,7 +764,7 @@ create or replace PACKAGE BODY LILA AS
     end;
 
 	--------------------------------------------------------------------------
-
+/*
     -- Set values of a stored record in the internal process list by a given record
     procedure updateSessionRecord(p_sessionRecord t_session_rec)
     as
@@ -704,7 +773,7 @@ create or replace PACKAGE BODY LILA AS
         listIndex := v_indexSession(p_sessionRecord.process_id);
         g_sessionList(listIndex) := p_sessionRecord;
     end;
-
+*/
 	--------------------------------------------------------------------------
 
     -- removes a record from the internal process list
@@ -757,7 +826,7 @@ create or replace PACKAGE BODY LILA AS
 	/*
 		Isolation Transactions
 	*/
-
+/*
     -- Writes a record to the details log table and marks it with the log level
     procedure persist_detail(p_processId number, p_tableName varchar2, p_counterDetail number, p_stepInfo varchar2, p_logLevel PLS_INTEGER)
     as 
@@ -785,9 +854,9 @@ create or replace PACKAGE BODY LILA AS
                 RAISE;
             end if;
     end;
-
+*/
 	--------------------------------------------------------------------------
-
+/*
     -- Writes a record to the details log table with debugging infos
     -- Log level of the record is given by p_logLevel
     procedure persist_debug_info(p_processId number, p_tableName varchar2, p_counterDetails number, p_stepInfo varchar2, p_logLevel number)
@@ -816,7 +885,7 @@ create or replace PACKAGE BODY LILA AS
                 RAISE;
             end if;
     end;
-
+*/
 	--------------------------------------------------------------------------
 
     -- Updates the status of a log entry in the main log table.
@@ -883,6 +952,7 @@ create or replace PACKAGE BODY LILA AS
 
 	--------------------------------------------------------------------------
 
+/*
     -- Writes a record to the details log table with error infos
     -- Log level of the record is given by p_logLevel
     procedure persist_error_stack(p_processId number, p_tableName varchar2, p_counterDetails number, p_stepInfo varchar2, p_logLevel PLS_INTEGER)
@@ -911,11 +981,8 @@ create or replace PACKAGE BODY LILA AS
             if should_raise_error(p_processId) then
                 RAISE;
             end if;
-    end;
-
-	--------------------------------------------------------------------------
-    
-
+    end;    
+*/
 	--------------------------------------------------------------------------
     -- Ends an earlier started logging session by the process ID.
     -- Important! Ignores if the process doesn't exist! No exception is thrown!
@@ -1042,6 +1109,134 @@ create or replace PACKAGE BODY LILA AS
             g_master_dirty_count := 0;
         end if;
     end;
+    
+	--------------------------------------------------------------------------
+    
+    procedure flushLogs(p_processId number)
+    as
+        v_key          constant varchar2(100) := to_char(p_processId);
+        v_targetTable  varchar2(150);
+        v_idx_session  pls_integer;
+        
+        -- Bulk-Listen für den Datentransfer (Schema-Level Typen)
+        v_levels       sys.odcinumberlist   := sys.odcinumberlist();
+        v_texts        sys.odcivarchar2list := sys.odcivarchar2list();
+        v_times        sys.odcidatelist     := sys.odcidatelist();
+        v_seqs         sys.odcinumberlist   := sys.odcinumberlist();
+        v_stacks       sys.odcivarchar2list := sys.odcivarchar2list();
+        v_backtraces   sys.odcivarchar2list := sys.odcivarchar2list();
+        v_callstacks   sys.odcivarchar2list := sys.odcivarchar2list();
+    begin
+        -- 1. Prüfen, ob Daten für diesen Prozess im Cache sind
+        if not g_log_groups.EXISTS(v_key) or g_log_groups(v_key).COUNT = 0 then
+            return;
+        end if;
+    
+        -- 2. Ziel-Tabelle aus der Session-Liste ermitteln
+        v_idx_session := v_indexSession(p_processId);
+        v_targetTable := g_sessionList(v_idx_session).tabName_master || '_DETAIL';
+    
+        -- 3. Daten aus der hierarchischen Map in flache Listen sammeln
+        for i in 1 .. g_log_groups(v_key).COUNT loop
+            v_levels.EXTEND;     v_levels(v_levels.LAST)     := g_log_groups(v_key)(i).log_level;
+            v_texts.EXTEND;      v_texts(v_texts.LAST)       := substrb(g_log_groups(v_key)(i).log_text, 1, 4000);
+            v_times.EXTEND;      v_times(v_times.LAST)       := cast(g_log_groups(v_key)(i).log_time as date);
+            v_seqs.EXTEND;       v_seqs(v_seqs.LAST)         := g_log_groups(v_key)(i).serial_no;
+            
+            -- Error-Stacks (begrenzt auf 4000 Byte für sys.odcivarchar2list)
+            v_stacks.EXTEND;     v_stacks(v_stacks.LAST)     := substrb(g_log_groups(v_key)(i).err_stack, 1, 4000);
+            v_backtraces.EXTEND; v_backtraces(v_backtraces.LAST) := substrb(g_log_groups(v_key)(i).err_backtrace, 1, 4000);
+            v_callstacks.EXTEND; v_callstacks(v_callstacks.LAST) := substrb(g_log_groups(v_key)(i).err_callstack, 1, 4000);
+        end loop;
+
+dbms_output.put_line('Daten wurden gesammelt');
+
+        -- 4. Übergabe an die autonome Bulk-Persistierung
+        persist_log_data(
+            p_processId    => p_processId,
+            p_target_table => v_targetTable,
+            p_levels       => v_levels,
+            p_texts        => v_texts,
+            p_times        => v_times,
+            p_seqs         => v_seqs,
+            p_stacks       => v_stacks,
+            p_backtraces   => v_backtraces,
+            p_callstacks   => v_callstacks
+        );
+    
+        -- 5. Cache für diesen Prozess leeren
+        g_log_groups(v_key).DELETE;
+    
+    exception
+        when others then
+            -- Zentrale Fehlerbehandlung nutzen
+            if should_raise_error(p_processId) then
+                raise;
+            end if;
+    end;
+    
+	--------------------------------------------------------------------------
+    
+    procedure write_to_log_buffer(
+        p_processId number, 
+        p_level number,
+        p_text varchar2,
+        p_errStack varchar2,
+        p_errBacktrace varchar2,
+        p_errCallstack varchar2
+    ) 
+    is
+        v_idx PLS_INTEGER;
+        v_key varchar2(100) := to_char(p_processId);
+        v_new_log t_log_buffer_rec;
+    begin
+dbms_output.put_line('write_to_log_buffer');
+        v_idx := v_indexSession(p_processId);
+        g_sessionList(v_idx).serial_no := g_sessionList(v_idx).serial_no + 1;
+        v_new_log.serial_no := g_sessionList(v_idx).serial_no;
+    
+        -- 1. Gruppe initialisieren
+        if not g_log_groups.EXISTS(v_key) then
+            g_log_groups(v_key) := t_log_history_tab();
+        end if;
+    
+        -- 2. Record befüllen
+        v_new_log.process_id    := p_processId; -- Jetzt vorhanden
+        v_new_log.log_level     := p_level;
+        v_new_log.log_text      := p_text;
+        v_new_log.log_time      := systimestamp;
+        v_new_log.serial_no     := g_sessionList(v_indexSession(p_processId)).serial_no;
+        v_new_log.err_stack     := p_errStack;
+        v_new_log.err_backtrace := p_errBacktrace;
+        v_new_log.err_callstack := p_errCallstack;
+    
+        -- 3. In den Cache hängen
+        g_log_groups(v_key).EXTEND;
+        g_log_groups(v_key)(g_log_groups(v_key).LAST) := v_new_log;
+    
+        -- 4. Globalen Dirty-Zähler erhöhen
+        g_log_dirty_count := g_log_dirty_count + 1;
+    
+        -- 5. Flush-Check
+        if g_log_dirty_count >= g_flush_log_threshold then
+            flushLogs(p_processId);
+            g_log_dirty_count := 0;
+        end if;
+    end;
+
+	--------------------------------------------------------------------------
+
+    procedure sync_logs(p_processId number, p_force boolean default false)
+    as
+        v_idx PLS_INTEGER;
+    begin
+        g_log_dirty_count := g_log_dirty_count + 1;
+
+        if p_force or g_monitor_dirty_count >= g_flush_log_threshold then
+            flushLogs(p_processId);
+            g_log_dirty_count := 0; -- Zähler erst nach erfolgreichem Flush zurücksetzen
+        end if;
+    end;
 
 	--------------------------------------------------------------------------
 
@@ -1053,12 +1248,19 @@ create or replace PACKAGE BODY LILA AS
     -- Details are adjusted to the debug level
     procedure DEBUG(p_processId number, p_stepInfo varchar2)
     as
-        v_idx PLS_INTEGER;
     begin
         if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
-            v_idx := v_indexSession(p_processId);
-            g_sessionList(v_idx).serial_no := g_sessionList(v_idx).serial_no + 1;
-            persist_debug_info(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).serial_no, p_stepInfo, logLevelDebug);
+--            g_sessionList(v_idx).serial_no := g_sessionList(v_idx).serial_no + 1;
+
+            write_to_log_buffer(
+                p_processId, 
+                logLevelDebug,
+                p_stepInfo,
+                null,
+                null,
+                DBMS_UTILITY.FORMAT_CALL_STACK
+            );
+--            persist_debug_info(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).serial_no, p_stepInfo, logLevelDebug);
         end if;
     end;
 
@@ -1069,7 +1271,19 @@ create or replace PACKAGE BODY LILA AS
     procedure INFO(p_processId number, p_stepInfo varchar2)
     as
     begin
-        log_detail(p_processId, p_stepInfo, logLevelInfo);
+dbms_output.enable();
+dbms_output.put_line('info: ' || p_stepInfo);
+        if v_indexSession.EXISTS(p_processId) and logLevelInfo <= g_sessionList(v_indexSession(p_processId)).log_level then
+            write_to_log_buffer(
+                p_processId, 
+                logLevelInfo,
+                p_stepInfo,
+                null,
+                null,
+                null
+            );
+        end if;
+--        log_detail(p_processId, p_stepInfo, logLevelInfo);
     end;
 
 	--------------------------------------------------------------------------
@@ -1082,10 +1296,23 @@ create or replace PACKAGE BODY LILA AS
     begin
         if v_indexSession.EXISTS(p_processId) and logLevelError <= g_sessionList(v_indexSession(p_processId)).log_level then
             v_idx := v_indexSession(p_processId);
-            g_sessionList(v_idx).serial_no := g_sessionList(v_idx).serial_no +1;
-            persist_error_stack(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).serial_no, p_stepInfo, logLevelError);
+--            g_sessionList(v_idx).serial_no := g_sessionList(v_idx).serial_no +1;
+
+            write_to_log_buffer(
+                p_processId, 
+                logLevelDebug,
+                p_stepInfo,
+                DBMS_UTILITY.FORMAT_ERROR_STACK,
+                DBMS_UTILITY.FORMAT_ERROR_BACKTRACE,
+                DBMS_UTILITY.FORMAT_CALL_STACK
+            );
+
+            
+            
+--            persist_error_stack(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).serial_no, p_stepInfo, logLevelError);
             sync_master_state(p_processId, true);
-            flushMonitor(p_processId);
+            sync_logs(p_processId, true);
+            sync_monitor(p_processId, true);
         end if;
     end;
 
@@ -1096,21 +1323,15 @@ create or replace PACKAGE BODY LILA AS
     procedure WARN(p_processId number, p_stepInfo varchar2)
     as
     begin
-        log_detail(p_processId, p_stepInfo, logLevelWarn);
-    end;
-
-	--------------------------------------------------------------------------
-
-    -- Writes data to the log detail table.
-    -- Enables independency of log levels to the calling script.
-    procedure LOG_DETAIL(p_processId number, p_stepInfo varchar2, p_logLevel PLS_INTEGER)
-    as
-        v_idx PLS_INTEGER;
-    begin
-       if v_indexSession.EXISTS(p_processId) and logLevelError <= g_sessionList(v_indexSession(p_processId)).log_level then
-            v_idx := v_indexSession(p_processId);
-            g_sessionList(v_idx).serial_no := g_sessionList(v_idx).serial_no +1;
-            persist_detail(p_processId, g_sessionList(v_idx).tabName_master, g_sessionList(v_idx).serial_no, p_stepInfo, p_logLevel);
+        if v_indexSession.EXISTS(p_processId) and logLevelWarn <= g_sessionList(v_indexSession(p_processId)).log_level then
+            write_to_log_buffer(
+                p_processId, 
+                logLevelInfo,
+                p_stepInfo,
+                null,
+                null,
+                null
+            );
         end if;
     end;
      
@@ -1320,7 +1541,9 @@ create or replace PACKAGE BODY LILA AS
 
         if v_indexSession.EXISTS(p_processId) then
             sync_master_state(p_processId, true);
+            sync_logs(p_processId, true);
             sync_monitor(p_processId, true);
+
 --            if  logLevelSilent <= g_sessionList(v_indexSession(p_processId)).log_level then
                 v_idx := v_indexSession(p_processId);
                 g_sessionList(v_idx).steps_done := p_stepsDone;        
