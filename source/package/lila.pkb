@@ -723,7 +723,7 @@ create or replace PACKAGE BODY LILA AS
         -- Log to Buffer
         write_to_log_buffer(
             p_processId, 
-            logLevelPerformance,
+            logLevelMonitor,
             l_msg,
             null,
             null,
@@ -770,6 +770,11 @@ create or replace PACKAGE BODY LILA AS
         v_history    t_action_history_tab;
         v_new_rec    t_monitor_rec;
     begin
+        -- if monitoring is not activated do nothing here
+        if v_indexSession.EXISTS(p_processId) and logLevelMonitor > g_sessionList(v_indexSession(p_processId)).log_level then
+            return;
+        end if;
+    
         if v_cache_last.EXISTS(v_key) then
             v_used_time := get_ms_diff(v_cache_last(v_key), v_now); 
             
@@ -1042,34 +1047,6 @@ create or replace PACKAGE BODY LILA AS
             end if;
     end;
  
-	--------------------------------------------------------------------------
-/*
-    -- Updates the status and the info field of a log entry in the main log table.
-    procedure persist_master_record(p_processId number, p_tableName varchar2, p_status PLS_INTEGER, p_processInfo varchar2)
-    as
-        pragma autonomous_transaction;
-        sqlStatement varchar2(500);
-    begin
-        sqlStatement := '
-        update PH_MASTER_TABLE
-        set status = :PH_STATUS,
-            info = :PH_PROCESS_INFO,
-            last_update = current_timestamp
-        where id = :PH_PROCESS_ID';
-        
-        sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_tableName);        
-        execute immediate sqlStatement using p_status, p_processInfo, p_processId;
-        commit;
-
-	exception
-	    when others then
-	        rollback; -- Auch im Fehlerfall die Transaktion beenden
-            if should_raise_error(p_processId) then
-                RAISE;
-            end if;
-    end;
-*/
-
     -------------------------------------------------------------------
     -- Ends an earlier started logging session by the process ID.
     -- Important! Ignores if the process doesn't exist! No exception is thrown!
@@ -1242,65 +1219,39 @@ create or replace PACKAGE BODY LILA AS
 		Public functions and procedures
     */
 
-    -- Used by external Procedure to write a new log entry with log level DEBUG
-    -- Details are adjusted to the debug level
-    procedure DEBUG(p_processId number, p_stepInfo varchar2)
-    as
-    begin
-        if v_indexSession.EXISTS(p_processId) and logLevelDebug <= g_sessionList(v_indexSession(p_processId)).log_level then
-            write_to_log_buffer(
-                p_processId, 
-                logLevelDebug,
-                p_stepInfo,
-                null,
-                null,
-                DBMS_UTILITY.FORMAT_CALL_STACK
-            );
-        end if;
-    end;
-
 	--------------------------------------------------------------------------
-
-    -- Used by external Procedure to write a new log entry with log level INFO
-    -- Details are adjusted to the info level
-    procedure INFO(p_processId number, p_stepInfo varchar2)
+    -- capsulation writing to log-buffer and synchronization of buffer
+    procedure log_any(
+        p_processId number, 
+        p_level number,
+        p_logText varchar2,
+        p_errStack varchar2,
+        p_errBacktrace varchar2,
+        p_errCallstack varchar2
+    )
     as
     begin
-        if v_indexSession.EXISTS(p_processId) and logLevelInfo <= g_sessionList(v_indexSession(p_processId)).log_level then
-            write_to_log_buffer(
-                p_processId, 
-                logLevelInfo,
-                p_stepInfo,
-                null,
-                null,
-                null
-            );
+        if v_indexSession.EXISTS(p_processId) and p_level <= g_sessionList(v_indexSession(p_processId)).log_level then
+        write_to_log_buffer(
+            p_processId, 
+            p_level,
+            p_logText,
+            null,
+            null,
+            DBMS_UTILITY.FORMAT_CALL_STACK
+        );
         end if;
-    end;
-
-	--------------------------------------------------------------------------
-
-    -- Used by external Procedure to write a new log entry with log level ERROR
-    -- Details are adjusted to the error level
-    procedure ERROR(p_processId number, p_stepInfo varchar2)
-    as
-    begin
-        if v_indexSession.EXISTS(p_processId) and logLevelError <= g_sessionList(v_indexSession(p_processId)).log_level then
-
-            write_to_log_buffer(
-                p_processId, 
-                logLevelDebug,
-                p_stepInfo,
-                DBMS_UTILITY.FORMAT_ERROR_STACK,
-                DBMS_UTILITY.FORMAT_ERROR_BACKTRACE,
-                DBMS_UTILITY.FORMAT_CALL_STACK
-            );
-
+        
+        if p_level = logLevelError then
+            -- in case of an error, performace is not the
+            -- first problem of the parent process 
             sync_master_state(p_processId, true);
             sync_log(p_processId, true);
-            sync_monitor(p_processId, true);
+            sync_monitor(p_processId, true);        
+        else
+            sync_log(p_processId);
         end if;
-
+        
     exception
         when others then
             -- Sicherheit für das Framework: Fehler im Flush dürfen Applikation nicht stoppen
@@ -1311,33 +1262,102 @@ create or replace PACKAGE BODY LILA AS
 
 	--------------------------------------------------------------------------
 
-    -- Used by external Procedure to write a new log entry with log level WARN
-    -- Details are adjusted to the warn level
-    procedure WARN(p_processId number, p_stepInfo varchar2)
+    /*
+		Public functions and procedures
+    */
+
+    -- Used by external Procedure to write a new log entry with log level DEBUG
+    -- Details are adjusted to the debug level
+    procedure DEBUG(p_processId number, p_logText varchar2)
     as
     begin
-        if v_indexSession.EXISTS(p_processId) and logLevelWarn <= g_sessionList(v_indexSession(p_processId)).log_level then
-            write_to_log_buffer(
+        log_any(
                 p_processId, 
-                logLevelInfo,
-                p_stepInfo,
+                logLevelDebug,
+                p_logText,
                 null,
                 null,
-                null
+                DBMS_UTILITY.FORMAT_CALL_STACK
             );
-        end if;
+    end;
+
+	--------------------------------------------------------------------------
+
+    -- Used by external Procedure to write a new log entry with log level INFO
+    -- Details are adjusted to the info level
+    procedure INFO(p_processId number, p_logText varchar2)
+    as
+    begin
+        log_any(
+            p_processId, 
+            logLevelInfo,
+            p_logText,
+            null,
+            null,
+            null
+        );
+    end;
+
+	--------------------------------------------------------------------------
+
+    -- Used by external Procedure to write a new log entry with log level ERROR
+    -- Details are adjusted to the error level
+    procedure ERROR(p_processId number, p_logText varchar2)
+    as
+    begin
+        log_any(
+            p_processId, 
+            logLevelDebug,
+            p_logText,
+            DBMS_UTILITY.FORMAT_ERROR_STACK,
+            DBMS_UTILITY.FORMAT_ERROR_BACKTRACE,
+            DBMS_UTILITY.FORMAT_CALL_STACK
+        );
+    end;
+
+	--------------------------------------------------------------------------
+
+    -- Used by external Procedure to write a new log entry with log level WARN
+    -- Details are adjusted to the warn level
+    procedure WARN(p_processId number, p_logText varchar2)
+    as
+    begin
+        log_any(
+            p_processId, 
+            logLevelInfo,
+            p_logText,
+            null,
+            null,
+            null
+        );
     end;
      
 	--------------------------------------------------------------------------
+    
+    procedure setAnyStatus(p_processId number, p_status PLS_INTEGER, p_processInfo varchar2, p_stepsToDo number, p_stepsDone number)
+    as
+    begin
+       if v_indexSession.EXISTS(p_processId) then
+            if p_status      is not null then g_process_cache(p_processId).status := p_status;        end if;
+            if p_processInfo is not null then g_process_cache(p_processId).info := p_processInfo;     end if;
+            if p_stepsToDo   is not null then g_process_cache(p_processId).steps_toDo := p_stepsToDo; end if;
+            if p_stepsDone   is not null then g_process_cache(p_processId).steps_done := p_stepsDone; end if;
+            
+            sync_master_state(p_processId);
+        end if;
+        
+    exception
+        when others then
+            -- Sicherheit für das Framework: Fehler im Flush dürfen Applikation nicht stoppen
+            if should_raise_error(p_processId) then
+                raise;
+            end if;
+    end;
 
     procedure SET_PROCESS_STATUS(p_processId number, p_status PLS_INTEGER, p_processInfo varchar2)
     as
     begin
-       if v_indexSession.EXISTS(p_processId) then
-            g_process_cache(p_processId).status := p_status;
-            g_process_cache(p_processId).info := p_processInfo;
-            sync_master_state(p_processId);
-        end if;
+        setAnyStatus(p_processId, p_status, p_processInfo, null, null);
     end;
 
 	--------------------------------------------------------------------------
@@ -1345,10 +1365,7 @@ create or replace PACKAGE BODY LILA AS
     procedure SET_PROCESS_STATUS(p_processId number, p_status PLS_INTEGER)
     as
     begin
-       if v_indexSession.EXISTS(p_processId) then
-            g_process_cache(p_processId).status := p_status;
-            sync_master_state(p_processId);
-        end if;
+        setAnyStatus(p_processId, p_status, null, null, null);
     end;
 
 	--------------------------------------------------------------------------
@@ -1356,21 +1373,16 @@ create or replace PACKAGE BODY LILA AS
      procedure SET_STEPS_TODO(p_processId number, p_stepsToDo number)
      as
      begin
-       if v_indexSession.EXISTS(p_processId) then
-            g_process_cache(p_processId).steps_todo := p_stepsToDo;
-            sync_master_state(p_processId);
-        end if;
+        setAnyStatus(p_processId, null, null, p_stepsToDo, null);
      end;
    
 	--------------------------------------------------------------------------
  
     procedure SET_STEPS_DONE(p_processId number, p_stepsDone number)
     as
-        v_idx PLS_INTEGER;
     begin
         if v_indexSession.EXISTS(p_processId) then
-            v_idx := v_indexSession(p_processId);
-            g_sessionList(v_idx).steps_done := p_stepsDone;
+--            g_sessionList(v_idx).steps_done := p_stepsDone;
             g_process_cache(p_processId).steps_done := p_stepsDone;
             sync_master_state(p_processId);
        end if;
@@ -1383,11 +1395,9 @@ create or replace PACKAGE BODY LILA AS
     as
         sqlStatement varchar2(500);
         lStepCounter number;
-        v_idx PLS_INTEGER;
     begin
         if v_indexSession.EXISTS(p_processId) then
-            v_idx := v_indexSession(p_processId);
-            g_sessionList(v_idx).steps_done := g_sessionList(v_idx).steps_done + 1;   
+--            g_sessionList(v_idx).steps_done := g_sessionList(v_idx).steps_done + 1;   
             g_process_cache(p_processId).steps_done := g_process_cache(p_processId).steps_done + 1;
 
             sync_master_state(p_processId);
