@@ -5,12 +5,16 @@ create or replace PACKAGE BODY LILA AS
     ---------------------------------------------------------------
     -- Record representing the internal session
     TYPE t_session_rec IS RECORD (
-        process_id      NUMBER(19,0),
-        serial_no       PLS_INTEGER := 0,
-        log_level       PLS_INTEGER := 0,
-        steps_done      PLS_INTEGER,
-        monitoring      PLS_INTEGER := 0,
-        tabName_master  VARCHAR2(100)
+        process_id          NUMBER(19,0),
+        serial_no           PLS_INTEGER := 0,
+        log_level           PLS_INTEGER := 0,
+        steps_done          PLS_INTEGER := 0,
+        monitoring          PLS_INTEGER := 0,
+        last_monitor_flush  TIMESTAMP, -- Zeitpunkt des letzten Monitor-Flushes
+        last_log_flush      TIMESTAMP, -- Zeitpunkt des letzten Log-Flushes
+        monitor_dirty_count PLS_INTEGER := 0, -- PRO PROZESS Zähler
+        log_dirty_count     PLS_INTEGER := 0,  -- PRO PROZESS Zähler
+        tabName_master      VARCHAR2(100)
     );
 
     -- Table for several processes
@@ -62,6 +66,8 @@ create or replace PACKAGE BODY LILA AS
     g_monitor_dirty_count PLS_INTEGER := 0; -- Zähler für die Monitoreinträge im Speicher
     g_flush_monitor_threshold CONSTANT PLS_INTEGER := 100; -- Max. Anzahl Monitoreinträge für das Flush
     
+    -- general Flush Time-Duration
+    g_flush_millis_threshold  CONSTANT PLS_INTEGER := 1500; 
     
     ---------------------------------------------------------------
     -- Logging
@@ -100,6 +106,22 @@ create or replace PACKAGE BODY LILA AS
     ---------------------------------------------------------------
     -- Functions and Procedures
     ---------------------------------------------------------------
+        
+    --------------------------------------------------------------------------
+    -- Millis between two timestamps
+    --------------------------------------------------------------------------
+    function get_ms_diff(p_start timestamp, p_end timestamp) return number is
+        v_diff interval day(0) to second(3); -- Präzision auf ms begrenzen
+    begin
+        v_diff := p_end - p_start;
+        -- Wir extrahieren nur die Sekunden inklusive der Nachkommastellen (ms)
+        -- und addieren die Minuten/Stunden/Tage als Sekunden-Vielfache
+        return (extract(day from v_diff) * 86400000)
+             + (extract(hour from v_diff) * 3600000)
+             + (extract(minute from v_diff) * 60000)
+             + (extract(second from v_diff) * 1000);
+    end;   
+
     function getSessionRecord(p_processId number) return t_session_rec;
 
     /*
@@ -467,12 +489,34 @@ create or replace PACKAGE BODY LILA AS
     procedure sync_monitor(p_processId number, p_force boolean default false)
     as
         v_idx PLS_INTEGER;
+        v_ms_since_flush NUMBER;
+        v_now constant timestamp := systimestamp;
+
     begin
-        g_monitor_dirty_count := g_monitor_dirty_count + 1;
+        -- 1. Index der Session holen
+        v_idx := v_indexSession(p_processId);
     
-        if p_force or g_monitor_dirty_count >= g_flush_monitor_threshold then
+        -- 2. Dirty-Zähler für diesen spezifischen Prozess erhöhen
+        g_sessionList(v_idx).monitor_dirty_count := g_sessionList(v_idx).monitor_dirty_count + 1;
+    
+        -- 3. Zeitdifferenz seit letztem Flush berechnen
+        -- Falls noch nie geflusht wurde (Start), setzen wir die Differenz hoch
+        if g_sessionList(v_idx).last_monitor_flush is null then
+            v_ms_since_flush := g_flush_millis_threshold + 1;
+        else
+            v_ms_since_flush := get_ms_diff(g_sessionList(v_idx).last_monitor_flush, v_now);
+        end if;
+    
+        -- 4. Die "Smarte" Flush-Bedingung: Menge ODER Zeit ODER Force
+        if p_force 
+           or g_sessionList(v_idx).monitor_dirty_count >= g_flush_monitor_threshold 
+           or v_ms_since_flush >= g_flush_millis_threshold
+        then
             flushMonitor(p_processId);
-            g_monitor_dirty_count := 0; -- Zähler erst nach erfolgreichem Flush zurücksetzen
+            
+            -- Reset der prozessspezifischen Steuerungsdaten
+            g_sessionList(v_idx).monitor_dirty_count := 0;
+            g_sessionList(v_idx).last_monitor_flush  := v_now;
         end if;
     end;
     
@@ -486,21 +530,6 @@ create or replace PACKAGE BODY LILA AS
         return to_char(p_processId) || '_' || p_actionName;
     end;
 
-    --------------------------------------------------------------------------
-    -- Delivers a record of the monitor list by process_id and action_name
-    --------------------------------------------------------------------------
-    function get_ms_diff(p_start timestamp, p_end timestamp) return number is
-        v_diff interval day to second;
-    begin
-        v_diff := p_end - p_start;
-        -- Umwandlung in Millisekunden: 
-        -- (Tage*86400 + Std*3600 + Min*60 + Sek) * 1000 + Millisekunden
-        return (extract(day from v_diff) * 86400
-              + extract(hour from v_diff) * 3600
-              + extract(minute from v_diff) * 60
-              + extract(second from v_diff)) * 1000;
-    end;
-    
     --------------------------------------------------------------------------
     -- Performance Ermittlung zu einer Action
     --------------------------------------------------------------------------
@@ -811,11 +840,14 @@ create or replace PACKAGE BODY LILA AS
             v_new_idx := v_indexSession(p_processId);
         end if;
 
-        g_sessionList(v_new_idx).process_id      := p_processId;
-        g_sessionList(v_new_idx).serial_no       := 0;
-        g_sessionList(v_new_idx).steps_done      := 0;
-        g_sessionList(v_new_idx).log_level       := p_logLevel;
-        g_sessionList(v_new_idx).tabName_master  := p_tabName;
+        g_sessionList(v_new_idx).process_id         := p_processId;
+--        g_sessionList(v_new_idx).serial_no          := 0;
+--        g_sessionList(v_new_idx).steps_done         := 0;
+        g_sessionList(v_new_idx).log_level          := p_logLevel;
+        g_sessionList(v_new_idx).tabName_master     := p_tabName;
+            -- Timestamp for flushing   
+        g_sessionList(v_new_idx).last_monitor_flush := systimestamp;
+        g_sessionList(v_new_idx).last_log_flush     := systimestamp;
 
         v_indexSession(p_processId) := v_new_idx;
     end;
@@ -1125,17 +1157,42 @@ create or replace PACKAGE BODY LILA AS
 
 	--------------------------------------------------------------------------
 
-    procedure sync_logs(p_processId number, p_force boolean default false)
-    as
-        v_idx PLS_INTEGER;
+    procedure sync_log(p_processId number, p_force boolean default false)
+    is
+        v_idx            pls_integer;
+        v_now            constant timestamp := systimestamp;
+        v_ms_since_flush number;
     begin
-        g_log_dirty_count := g_log_dirty_count + 1;
-
-        if p_force or g_monitor_dirty_count >= g_flush_log_threshold then
+        -- 1. Index der Session holen
+        v_idx := v_indexSession(p_processId);
+    
+        -- 2. In-Memory Zähler für Logs dieses Prozesses erhöhen
+        g_sessionList(v_idx).log_dirty_count := g_sessionList(v_idx).log_dirty_count + 1;
+    
+        -- 3. Zeit seit dem letzten Log-Flush berechnen
+        -- (get_ms_diff ist Ihre optimierte Funktion)
+        v_ms_since_flush := get_ms_diff(g_sessionList(v_idx).last_log_flush, v_now);
+    
+        -- 4. Flush-Bedingung: Menge ODER Zeit ODER Force
+        if p_force 
+           or g_sessionList(v_idx).log_dirty_count >= g_flush_log_threshold 
+           or v_ms_since_flush >= g_flush_millis_threshold
+        then
+            -- Alle gepufferten Logs dieses Prozesses in die DB schreiben
             flushLogs(p_processId);
-            g_log_dirty_count := 0; -- Zähler erst nach erfolgreichem Flush zurücksetzen
+            
+            -- Steuerungsdaten für diesen Prozess zurücksetzen
+            g_sessionList(v_idx).log_dirty_count := 0;
+            g_sessionList(v_idx).last_log_flush  := v_now;
         end if;
-    end;
+        
+    exception
+        when others then
+            -- Sicherheit für das Framework: Fehler im Flush dürfen Applikation nicht stoppen
+            if should_raise_error(p_processId) then
+                raise;
+            end if;
+    end sync_log;
 
 	--------------------------------------------------------------------------
 
@@ -1198,9 +1255,16 @@ create or replace PACKAGE BODY LILA AS
             );
 
             sync_master_state(p_processId, true);
-            sync_logs(p_processId, true);
+            sync_log(p_processId, true);
             sync_monitor(p_processId, true);
         end if;
+
+    exception
+        when others then
+            -- Sicherheit für das Framework: Fehler im Flush dürfen Applikation nicht stoppen
+            if should_raise_error(p_processId) then
+                raise;
+            end if;
     end;
 
 	--------------------------------------------------------------------------
@@ -1416,7 +1480,7 @@ create or replace PACKAGE BODY LILA AS
 
         if v_indexSession.EXISTS(p_processId) then
             sync_master_state(p_processId, true);
-            sync_logs(p_processId, true);
+            sync_log(p_processId, true);
             sync_monitor(p_processId, true);
 
 --            if  logLevelSilent <= g_sessionList(v_indexSession(p_processId)).log_level then
@@ -1438,6 +1502,7 @@ create or replace PACKAGE BODY LILA AS
         pProcessId number(19,0);   
         v_new_rec t_process_rec;
     begin
+
        -- If silent log mode don't do anything
         if p_session_init.logLevel > logLevelSilent then
 	        -- Sicherstellen, dass die LOG-Tabellen existieren
