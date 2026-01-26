@@ -66,11 +66,11 @@ create or replace PACKAGE BODY LILA AS
     g_monitor_dirty_count PLS_INTEGER := 0; -- Zähler für die Monitoreinträge im Speicher
     g_flush_monitor_threshold CONSTANT PLS_INTEGER := 100; -- Max. Anzahl Monitoreinträge für das Flush
 
-    g_alert_threshold_factor NUMBER := 2.0; -- Max. Ausreißer in der Dauer eines Verarbeitungsschrittes
+    g_monitor_alert_threshold_factor NUMBER := 2.0; -- Max. Ausreißer in der Dauer eines Verarbeitungsschrittes
     
     -- general Flush Time-Duration
     g_flush_millis_threshold  CONSTANT PLS_INTEGER := 1500; 
-    
+        
     ---------------------------------------------------------------
     -- Logging
     ---------------------------------------------------------------
@@ -95,9 +95,17 @@ create or replace PACKAGE BODY LILA AS
     g_log_groups t_log_map;
     
     -- Steuerungsvariablen (Analog zum Monitoring)
-    g_log_dirty_count PLS_INTEGER := 0; 
+--    g_log_dirty_count PLS_INTEGER := 0; 
     g_flush_log_threshold CONSTANT PLS_INTEGER := 100;
     
+    ---------------------------------------------------------------
+    -- General Variables
+    ---------------------------------------------------------------
+
+    -- ALERT Registration
+    g_isAlertRegistered BOOLEAN := false;
+    g_alertCode CONSTANT varchar2(20) := 'LILA_ALERT_CFG';
+
     ---------------------------------------------------------------
     -- Placeholders for tables
     ---------------------------------------------------------------
@@ -108,7 +116,8 @@ create or replace PACKAGE BODY LILA AS
     ---------------------------------------------------------------
     -- Functions and Procedures
     ---------------------------------------------------------------
-        
+    function getSessionRecord(p_processId number) return t_session_rec;
+
     --------------------------------------------------------------------------
     -- Millis between two timestamps
     --------------------------------------------------------------------------
@@ -124,12 +133,20 @@ create or replace PACKAGE BODY LILA AS
              + (extract(second from v_diff) * 1000);
     end;   
 
-    function getSessionRecord(p_processId number) return t_session_rec;
-
     /*
         Internal methods are written in lowercase and camelCase
     */
     
+    -- register to Alerts
+    procedure registerForAlert
+    as
+    begin
+        if not g_isAlertRegistered then
+            DBMS_ALERT.REGISTER(g_alertCode);
+        end if;
+    end;
+
+	--------------------------------------------------------------------------    
     -- global exception handling
     function should_raise_error(p_processId number) return boolean
     as
@@ -143,7 +160,9 @@ create or replace PACKAGE BODY LILA AS
         return false;
     exception
         when others then return false; -- Sicherheit geht vor
-    end;    
+    end;  
+    
+	--------------------------------------------------------------------------
 
     -- run execute immediate with exception handling
     procedure run_sql(p_sqlStmt varchar2)
@@ -157,6 +176,8 @@ create or replace PACKAGE BODY LILA AS
             DBMS_OUTPUT.PUT_LINE(SQLERRM);
     end;
     
+	--------------------------------------------------------------------------
+
     -- Checks if a database sequence exists
     function objectExists(p_objectName varchar2, p_objectType varchar2) return boolean
     as
@@ -213,6 +234,7 @@ create or replace PACKAGE BODY LILA AS
             create table PH_MASTER_TABLE ( 
                 id number(19,0),
                 process_name varchar2(100),
+                log_level number,
                 process_start timestamp(6),
                 process_end timestamp(6),
                 last_update timestamp(6),
@@ -343,6 +365,7 @@ create or replace PACKAGE BODY LILA AS
         select
             id,
             process_name,
+            log_level,
             process_start,
             process_end,
             last_update,
@@ -405,7 +428,7 @@ create or replace PACKAGE BODY LILA AS
             end if;
 
     end;
-
+    
 	--------------------------------------------------------------------------
     
     procedure flushLogs(p_processId number)
@@ -509,13 +532,13 @@ create or replace PACKAGE BODY LILA AS
         g_log_groups(v_key)(g_log_groups(v_key).LAST) := v_new_log;
     
         -- 4. Globalen Dirty-Zähler erhöhen
-        g_log_dirty_count := g_log_dirty_count + 1;
+--        g_log_dirty_count := g_log_dirty_count + 1;
     
         -- 5. Flush-Check
-        if g_log_dirty_count >= g_flush_log_threshold then
-            flushLogs(p_processId);
-            g_log_dirty_count := 0;
-        end if;
+--        if g_log_dirty_count >= g_flush_log_threshold then
+--            flushLogs(p_processId);
+--            g_log_dirty_count := 0;
+--        end if;
     end;
 
 
@@ -741,7 +764,7 @@ create or replace PACKAGE BODY LILA AS
     begin
         IF p_monitor_rec.steps_done > 5 THEN 
             
-            l_threshold_duration := p_monitor_rec.avg_action_time * g_alert_threshold_factor;
+            l_threshold_duration := p_monitor_rec.avg_action_time * g_monitor_alert_threshold_factor;
         
             IF p_monitor_rec.used_time > l_threshold_duration THEN
                 -- Hier wird die Alert-Aktion ausgelöst
@@ -937,8 +960,6 @@ create or replace PACKAGE BODY LILA AS
     function getSessionRecord(p_processId number) return t_session_rec
     as
         listIndex number;
---        sessionRec t_session_rec;
---        processRec t_process_rec;
     begin
         if not v_indexSession.EXISTS(p_processId) THEN        
             return null;
@@ -950,7 +971,7 @@ create or replace PACKAGE BODY LILA AS
     end;
 
 	--------------------------------------------------------------------------
-/*
+
     -- Set values of a stored record in the internal process list by a given record
     procedure updateSessionRecord(p_sessionRecord t_session_rec)
     as
@@ -959,7 +980,7 @@ create or replace PACKAGE BODY LILA AS
         listIndex := v_indexSession(p_sessionRecord.process_id);
         g_sessionList(listIndex) := p_sessionRecord;
     end;
-*/
+
 	--------------------------------------------------------------------------
 
     -- removes a record from the internal process list
@@ -1130,6 +1151,7 @@ create or replace PACKAGE BODY LILA AS
 	            steps_todo,
 	            steps_done,
 	            status,
+                log_level,
 	            info
 	        )
 	        values (
@@ -1141,10 +1163,11 @@ create or replace PACKAGE BODY LILA AS
 	            :PH_STEPS_TO_DO, 
 	            null,
 	            null,
+                :PH_LOG_LEVEL,
 	            ''START''
             )';
             sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_TabNameMaster);
-	        execute immediate sqlStatement using p_processId, p_processName, p_stepsToDo;     
+	        execute immediate sqlStatement using p_processId, p_processName, p_stepsToDo, p_logLevel;     
 	        commit;
 
 	exception
@@ -1157,7 +1180,7 @@ create or replace PACKAGE BODY LILA AS
 
 	--------------------------------------------------------------------------
     
-    procedure sync_master_state(p_processId number, p_force boolean default false)
+    procedure sync_master(p_processId number, p_force boolean default false)
     as
         v_idx PLS_INTEGER;
     begin
@@ -1199,6 +1222,7 @@ create or replace PACKAGE BODY LILA AS
         then
             -- Alle gepufferten Logs dieses Prozesses in die DB schreiben
             flushLogs(p_processId);
+--            g_log_dirty_count := 0;
             
             -- Steuerungsdaten für diesen Prozess zurücksetzen
             g_sessionList(v_idx).log_dirty_count := 0;
@@ -1211,7 +1235,7 @@ create or replace PACKAGE BODY LILA AS
             if should_raise_error(p_processId) then
                 raise;
             end if;
-    end sync_log;
+    end;
 
 	--------------------------------------------------------------------------
 
@@ -1220,6 +1244,62 @@ create or replace PACKAGE BODY LILA AS
     */
 
 	--------------------------------------------------------------------------
+    procedure reloadConfiguration(p_processId number)
+    as
+        p_session_rec t_session_rec;
+        p_process_rec t_process_rec;
+    begin
+        -- at first clean dirty memory and write to table
+        sync_log(p_processId, true);
+        sync_master(p_processId, true);
+        sync_monitor(p_processId, true);
+        
+        -- get session data
+        p_session_rec := getSessionRecord(p_processId);
+        removeSession(p_processId);
+        
+        p_process_rec := getProcessRecord(p_processId);
+        p_session_rec.log_level := p_process_rec.log_level;
+        p_session_rec.steps_done := p_process_rec.steps_done;
+        insertSession(p_session_rec.tabName_master, p_processId, p_session_rec.log_level); 
+        updateSessionRecord(p_session_rec);
+
+    end;
+
+    procedure checkUpdateConfiguration
+    as
+        l_msg VARCHAR2(1800);
+        l_status INTEGER;
+        l_processId number;
+        
+        l_key  VARCHAR2(20)  := 'P_ID=';
+        l_start PLS_INTEGER;
+        l_end   PLS_INTEGER;
+        l_val   VARCHAR2(100);
+    begin
+        -- timeout => 0 bedeutet: Nicht warten, nur kurz gucken
+        DBMS_ALERT.WAITONE(g_alertCode, l_msg, l_status, 0);
+        if l_status = 0 then
+            l_start := INSTR(l_msg, l_key);
+            -- zerlege l_msg
+            -- <Bla='Blubb><P_ID=3400><Aha=1>
+            IF l_start > 0 THEN
+                l_start := l_start + LENGTH(l_key); -- Gehe zum Anfang des Wertes
+                l_end   := INSTR(l_msg, '>', l_start); -- Suche das schließende Tag
+                l_val   := to_number(SUBSTR(l_msg, l_start, l_end - l_start));
+                reloadConfiguration(l_processId);
+            end if;
+        END IF;
+      
+    exception
+        when others then
+--            if should_raise_error(p_processId) then
+--                RAISE;
+        null;
+--            end if;
+    end;
+
+
     -- capsulation writing to log-buffer and synchronization of buffer
     procedure log_any(
         p_processId number, 
@@ -1231,6 +1311,9 @@ create or replace PACKAGE BODY LILA AS
     )
     as
     begin
+        -- has something changed in configuration?
+        checkUpdateConfiguration;   
+    
         if v_indexSession.EXISTS(p_processId) and p_level <= g_sessionList(v_indexSession(p_processId)).log_level then
         write_to_log_buffer(
             p_processId, 
@@ -1245,7 +1328,7 @@ create or replace PACKAGE BODY LILA AS
         if p_level = logLevelError then
             -- in case of an error, performace is not the
             -- first problem of the parent process 
-            sync_master_state(p_processId, true);
+            sync_master(p_processId, true);
             sync_log(p_processId, true);
             sync_monitor(p_processId, true);        
         else
@@ -1259,7 +1342,7 @@ create or replace PACKAGE BODY LILA AS
                 raise;
             end if;
     end;
-
+    
 	--------------------------------------------------------------------------
 
     /*
@@ -1343,7 +1426,7 @@ create or replace PACKAGE BODY LILA AS
             if p_stepsToDo   is not null then g_process_cache(p_processId).steps_toDo := p_stepsToDo; end if;
             if p_stepsDone   is not null then g_process_cache(p_processId).steps_done := p_stepsDone; end if;
             
-            sync_master_state(p_processId);
+            sync_master(p_processId);
         end if;
         
     exception
@@ -1384,7 +1467,7 @@ create or replace PACKAGE BODY LILA AS
         if v_indexSession.EXISTS(p_processId) then
 --            g_sessionList(v_idx).steps_done := p_stepsDone;
             g_process_cache(p_processId).steps_done := p_stepsDone;
-            sync_master_state(p_processId);
+            sync_master(p_processId);
        end if;
 
     end;
@@ -1400,7 +1483,7 @@ create or replace PACKAGE BODY LILA AS
 --            g_sessionList(v_idx).steps_done := g_sessionList(v_idx).steps_done + 1;   
             g_process_cache(p_processId).steps_done := g_process_cache(p_processId).steps_done + 1;
 
-            sync_master_state(p_processId);
+            sync_master(p_processId);
         end if;
     end;
     
@@ -1530,7 +1613,7 @@ create or replace PACKAGE BODY LILA AS
         v_idx PLS_INTEGER;
     begin
         if v_indexSession.EXISTS(p_processId) then
-            sync_master_state(p_processId, true);
+            sync_master(p_processId, true);
             sync_log(p_processId, true);
             sync_monitor(p_processId, true);
 
@@ -1583,6 +1666,7 @@ create or replace PACKAGE BODY LILA AS
         v_new_rec.info            := 'START';
         
         g_process_cache(pProcessId) := v_new_rec;
+        registerForAlert;
 
         return pProcessId;
 
