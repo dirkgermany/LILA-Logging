@@ -1,5 +1,4 @@
 create or replace PACKAGE LILA AS
-
     /* Complete Doc and last version see https://github.com/dirkgermany/LILA-Logging/docs */
 
     -- =========
@@ -36,6 +35,7 @@ create or replace PACKAGE LILA AS
         daysToKeep PLS_INTEGER,
         tabNameMaster VARCHAR2(100) DEFAULT 'LILA_LOG'
     );
+
 
     ------------------------------
     -- Life cycle of a log session
@@ -83,6 +83,10 @@ create or replace PACKAGE LILA AS
     PROCEDURE MARK_STEP(p_processId NUMBER, p_actionName VARCHAR2);
     FUNCTION GET_METRIC_AVG_DURATION(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER;
     FUNCTION GET_METRIC_STEPS(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER;
+    
+    
+    FUNCTION list_active_sessions(p_timeout_sec IN NUMBER DEFAULT 5) RETURN CLOB;
+
 
     ----------
     -- Testing
