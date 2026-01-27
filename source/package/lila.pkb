@@ -137,6 +137,9 @@ create or replace PACKAGE BODY LILA AS
     g_max_entries_per_monitor_action PLS_INTEGER    := 1000; -- Round Robin: Max. Anzahl Einträge für eine Aktion je Action
     g_flush_monitor_threshold PLS_INTEGER           := 100; -- Max. Anzahl Monitoreinträge für das Flush
     g_monitor_alert_threshold_factor NUMBER         := 2.0; -- Max. Ausreißer in der Dauer eines Verarbeitungsschrittes
+    
+    -- Throttling for SIGNALs
+    g_last_signal_time TIMESTAMP := SYSTIMESTAMP - INTERVAL '1' DAY;
 
     ---------------------------------------------------------------
     -- Placeholders for tables
@@ -2036,12 +2039,107 @@ dbms_output.put_line('okay');
         return new_session(p_session_init);
     end;
     
+    --------------------------------------------------------------------------
+    -- Avoid throttling 
 	--------------------------------------------------------------------------
-    
-    FUNCTION list_active_sessions(p_timeout_sec IN NUMBER DEFAULT 5) RETURN CLOB IS
-        l_report    CLOB;
+    function waitForSignal(p_timeout_sec number) return PLS_INTEGER
+    as
+        PRAGMA AUTONOMOUS_TRANSACTION;
         l_msg       VARCHAR2(1800);
-        l_status    INTEGER;
+        l_status    PLS_INTEGER := -1;
+    begin
+        IF (SYSTIMESTAMP - g_last_signal_time) > INTERVAL '10' SECOND THEN
+            DBMS_ALERT.REGISTER('LILA_DATA_PERSISTED');
+            DBMS_ALERT.SIGNAL('LILA_REQUEST_PERSIST', 'REQUEST_FROM_' || USER);
+            COMMIT;
+            DBMS_ALERT.WAITONE('LILA_DATA_PERSISTED', l_msg, l_status, p_timeout_sec);
+            DBMS_ALERT.REMOVE('LILA_DATA_PERSISTED');
+            g_last_signal_time := SYSTIMESTAMP;
+        END IF;
+        commit;
+        return l_status;
+        
+    exception
+        when others then
+            rollback;
+            return 1;
+    end;
+    
+    --------------------------------------------------------------------------
+    
+    FUNCTION GET_LATEST_CONFIG(p_timeout_sec IN NUMBER DEFAULT 5) RETURN CLOB IS
+        l_report    CLOB;
+        l_line      VARCHAR2(120) := RPAD('-', 100, '-') || CHR(10);
+        l_sql       VARCHAR2(2000);
+        l_cursor    SYS_REFCURSOR;
+    
+        -- Variablen für die Spalten
+        v_id        NUMBER;
+        v_name      VARCHAR2(100);
+        v_start     TIMESTAMP;
+        v_is_act    NUMBER;
+        v_lvl       NUMBER;
+        v_f_log     NUMBER;
+        v_f_proc    NUMBER;
+        v_f_mon     NUMBER;
+        v_m_factor  NUMBER;
+        v_m_max     NUMBER;
+    BEGIN
+        -- B. Header für den Report
+        l_report := l_line || ' LATEST ACTIVE CONFIGURATION REPORT' || CHR(10) || l_line;
+    
+        case waitForSignal(p_timeout_sec)
+            when 0 THEN
+                l_report := l_report || '-- Status: Daten frisch von Instanz erhalten.' || CHR(10);
+            when 1 then
+                l_report := l_report || '-- Warnung: Instanz antwortet nicht (Timeout). Zeige alten Tabellenstand.' || CHR(10);
+            when -1 then
+                l_report := l_report || '-- Info: Lese Tabelle direkt (10s Throttling aktiv).' || CHR(10);
+        end case;
+
+        -- C. Daten abfragen (Jüngster Datensatz mit IS_ACTIVE = 1)
+        l_sql := 'SELECT process_id, process_name, process_start, is_active, log_level, ' ||
+                 '       flush_log_threshold, flush_process_threshold, flush_monitor_threshold, ' ||
+                 '       monitor_alert_threshold_factor, max_entries_per_monitor_action ' ||
+                 'FROM ' || CONFIG_TABLE || ' ' ||
+                 'WHERE is_active = 1 ' ||
+                 'ORDER BY process_start DESC ' ||
+                 'FETCH FIRST 1 ROW ONLY';
+    
+        BEGIN
+            OPEN l_cursor FOR l_sql;
+            FETCH l_cursor INTO v_id, v_name, v_start, v_is_act, v_lvl, 
+                                v_f_log, v_f_proc, v_f_mon, v_m_factor, v_m_max;
+            
+            IF l_cursor%FOUND THEN
+                l_report := l_report || 
+                    'Process Info:  ' || v_name || ' (ID: ' || v_id || ') Started: ' || TO_CHAR(v_start, 'DD.MM.YYYY HH24:MI:SS') || CHR(10) ||
+                    l_line ||
+                    RPAD('IS_ACTIVE', 35) || ': ' || v_is_act || CHR(10) ||
+                    RPAD('LOG_LEVEL', 35) || ': ' || v_lvl || CHR(10) ||
+                    RPAD('FLUSH_LOG_THRESHOLD', 35) || ': ' || v_f_log || CHR(10) ||
+                    RPAD('FLUSH_PROCESS_THRESHOLD', 35) || ': ' || v_f_proc || CHR(10) ||
+                    RPAD('FLUSH_MONITOR_THRESHOLD', 35) || ': ' || v_f_mon || CHR(10) ||
+                    RPAD('MONITOR_ALERT_THRESHOLD_FACTOR', 35) || ': ' || v_m_factor || CHR(10) ||
+                    RPAD('MAX_ENTRIES_PER_MONITOR_ACTION', 35) || ': ' || v_m_max || CHR(10);
+            ELSE
+                l_report := l_report || 'No active session (IS_ACTIVE = 1) found.' || CHR(10);
+            END IF;
+            CLOSE l_cursor;
+        EXCEPTION
+            WHEN OTHERS THEN
+                l_report := l_report || 'ERROR: Could not read configuration from ' || CONFIG_TABLE || CHR(10) || SQLERRM || CHR(10);
+                IF l_cursor%ISOPEN THEN CLOSE l_cursor; END IF;
+        END;
+    
+        l_report := l_report || l_line;
+        RETURN l_report;
+    END;
+
+    -------------------------------------------------------------------------
+    
+    FUNCTION LIST_ACTIVE_SESSIONS(p_timeout_sec IN NUMBER DEFAULT 5) RETURN CLOB IS
+        l_report    CLOB;
         l_line      VARCHAR2(200) := RPAD('-', 120, '-') || CHR(10);
         
         -- Variablen für den dynamischen Cursor
@@ -2056,16 +2154,19 @@ dbms_output.put_line('okay');
         v_todo      NUMBER;
         v_done      NUMBER;
     BEGIN
-        -- 1. Inst1 signalisieren: "Schreib deine Daten in die Tabelle!"
---        DBMS_ALERT.REGISTER('LILA_DATA_PERSISTED');
---        DBMS_ALERT.SIGNAL('LILA_REQUEST_PERSIST', 'REQUEST_FROM_' || USER);
---        COMMIT; -- Wichtig, damit Inst1 das Signal sieht
-    
-        -- 2. Auf Antwort von Inst1 warten
---        DBMS_ALERT.WAITONE('LILA_DATA_PERSISTED', l_msg, l_status, p_timeout_sec);
+        l_report := l_line || ' LATEST ACTIVE CONFIGURATION REPORT' || CHR(10) || l_line;
+        
+        case waitForSignal(p_timeout_sec)
+            when 0 THEN
+                l_report := l_report || '-- Status: Daten frisch von Instanz erhalten.' || CHR(10);
+            when 1 then
+                l_report := l_report || '-- Warnung: Instanz antwortet nicht (Timeout). Zeige alten Tabellenstand.' || CHR(10);
+            when -1 then
+                l_report := l_report || '-- Info: Lese Tabelle direkt (10s Throttling aktiv).' || CHR(10);
+        end case;
     
         -- 3. Header für den Report bauen
-        l_report := l_line ||
+        l_report := l_report || l_line ||
                     RPAD('PROCESS_ID', 12) || ' | ' ||
                     RPAD('NAME', 20) || ' | ' ||
                     RPAD('START_TIME', 20) || ' | ' ||
@@ -2073,13 +2174,13 @@ dbms_output.put_line('okay');
                     RPAD('TODO', 8) || ' | ' ||
                     RPAD('DONE', 8) || CHR(10) ||
                     l_line;
-l_status := 0;
-        IF l_status = 0 THEN
+                                   
+        
             -- Dynamisches SQL zusammenbauen
             -- Wir nutzen CONFIG_TABLE (deine Variable/Konstante für den Namen)
             l_sql := ' SELECT process_id, process_name, process_start, log_level, steps_todo, steps_done ' ||
                      ' FROM ' || CONFIG_TABLE ||
-                     ' WHERE is_active in (0, 1)
+                     ' WHERE is_active = 1
                        ORDER BY process_name, process_start DESC';
 
             BEGIN
@@ -2100,16 +2201,12 @@ l_status := 0;
                 
             EXCEPTION
                 WHEN OTHERS THEN
-                    l_report := l_report || 'FEHLER: Tabelle ' || CONFIG_TABLE || ' konnte nicht gelesen werden.' || CHR(10) || l_sql;
+                    l_report := l_report || 'ERROR: Table ' || CONFIG_TABLE || ' could not be read.' || CHR(10);
                     IF l_cursor%ISOPEN THEN CLOSE l_cursor; END IF;
             END;
-        ELSE
-            l_report := l_report || 'WARNUNG: Keine Antwort von Inst1 (Timeout).' || CHR(10);
-        END IF;
+
         
-        l_report := l_report || l_line;
---        DBMS_ALERT.REMOVE('LILA_DATA_PERSISTED');
-        
+        l_report := l_report || l_line;        
         RETURN l_report;
     END;
    
