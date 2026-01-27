@@ -158,6 +158,82 @@ create or replace PACKAGE BODY LILA AS
     procedure refreshConfiguration(p_processId number);
     procedure refreshSession(p_configRec t_config_rec);
     
+    --------------------------------------------------------------------------
+    -- Avoid throttling 
+	--------------------------------------------------------------------------
+    function waitForResponse(
+        p_signalName   IN varchar2, 
+        p_signalMsg    IN varchar2,
+        p_registerName IN varchar2, 
+        p_timeoutSec   IN number
+    ) return varchar2
+    as
+        PRAGMA AUTONOMOUS_TRANSACTION;
+        l_msg       VARCHAR2(1800);
+        l_status    PLS_INTEGER;
+    begin
+        -- Prüfung auf Throttling (10-Sekunden-Sperre)
+        IF (SYSTIMESTAMP - g_last_signal_time) > INTERVAL '10' SECOND THEN
+            DBMS_ALERT.REGISTER(p_registerName);
+            DBMS_ALERT.SIGNAL(p_signalName, p_signalMsg);
+            COMMIT; -- Signal für andere Sessions sichtbar machen
+            
+            DBMS_ALERT.WAITONE(p_registerName, l_msg, l_status, p_timeoutSec);
+            DBMS_ALERT.REMOVE(p_registerName);
+            
+            g_last_signal_time := SYSTIMESTAMP;
+            
+            -- Falls Timeout (status 1), geben wir einen Hinweis zurück
+            IF l_status = 1 THEN
+                l_msg := 'TIMEOUT';
+            END IF;
+        ELSE
+            -- Kennung für: "Signal wurde wegen Throttling übersprungen"
+            l_msg := 'THROTTLED';
+        END IF;
+    
+        COMMIT; -- Autonome Transaktion abschließen
+        return l_msg;
+        
+    exception
+        when others then
+            rollback;
+            -- Im Fehlerfall sicherheitshalber das Register entfernen, 
+            -- falls es oben bereits registriert wurde
+            BEGIN DBMS_ALERT.REMOVE(p_registerName); EXCEPTION WHEN OTHERS THEN NULL; END;
+            return 'ERROR: ' || SQLERRM;
+    end;
+
+	--------------------------------------------------------------------------
+
+    function waitForSignal(
+        p_registerName varchar2,
+        p_signalName varchar2, 
+        p_signalMsg varchar2,
+        p_timeoutSec number
+    ) return PLS_INTEGER
+    as
+        PRAGMA AUTONOMOUS_TRANSACTION;
+        l_msg       VARCHAR2(1800);
+        l_status    PLS_INTEGER := -1;
+    begin
+        IF (SYSTIMESTAMP - g_last_signal_time) > INTERVAL '10' SECOND THEN
+            DBMS_ALERT.REGISTER(p_registerName);
+            DBMS_ALERT.SIGNAL(p_signalName, p_signalMsg);
+            COMMIT;
+            DBMS_ALERT.WAITONE(p_registerName, l_msg, l_status, p_timeoutSec);
+            DBMS_ALERT.REMOVE(p_registerName);
+            g_last_signal_time := SYSTIMESTAMP;
+        END IF;
+        commit;
+        return l_status;
+        
+    exception
+        when others then
+            rollback;
+            return 1;
+    end;
+    
     
     --------------------------------------------------------------------------
     -- Copy actual process and session data to config record
@@ -2025,82 +2101,7 @@ dbms_output.put_line('okay');
     
         return new_session(p_session_init);
     end;
-    
-    --------------------------------------------------------------------------
-    -- Avoid throttling 
-	--------------------------------------------------------------------------
-    function waitForResponse(
-        p_signalName   IN varchar2, 
-        p_signalMsg    IN varchar2,
-        p_registerName IN varchar2, 
-        p_timeoutSec   IN number
-    ) return varchar2
-    as
-        PRAGMA AUTONOMOUS_TRANSACTION;
-        l_msg       VARCHAR2(1800);
-        l_status    PLS_INTEGER;
-    begin
-        -- Prüfung auf Throttling (10-Sekunden-Sperre)
-        IF (SYSTIMESTAMP - g_last_signal_time) > INTERVAL '10' SECOND THEN
-            DBMS_ALERT.REGISTER(p_registerName);
-            DBMS_ALERT.SIGNAL(p_signalName, p_signalMsg);
-            COMMIT; -- Signal für andere Sessions sichtbar machen
-            
-            DBMS_ALERT.WAITONE(p_registerName, l_msg, l_status, p_timeoutSec);
-            DBMS_ALERT.REMOVE(p_registerName);
-            
-            g_last_signal_time := SYSTIMESTAMP;
-            
-            -- Falls Timeout (status 1), geben wir einen Hinweis zurück
-            IF l_status = 1 THEN
-                l_msg := 'TIMEOUT';
-            END IF;
-        ELSE
-            -- Kennung für: "Signal wurde wegen Throttling übersprungen"
-            l_msg := 'THROTTLED';
-        END IF;
-    
-        COMMIT; -- Autonome Transaktion abschließen
-        return l_msg;
         
-    exception
-        when others then
-            rollback;
-            -- Im Fehlerfall sicherheitshalber das Register entfernen, 
-            -- falls es oben bereits registriert wurde
-            BEGIN DBMS_ALERT.REMOVE(p_registerName); EXCEPTION WHEN OTHERS THEN NULL; END;
-            return 'ERROR: ' || SQLERRM;
-    end;
-
-	--------------------------------------------------------------------------
-
-    function waitForSignal(
-        p_signalName varchar2, 
-        p_signalMsg varchar2,
-        p_registerName varchar2, p_timeoutSec number
-    ) return PLS_INTEGER
-    as
-        PRAGMA AUTONOMOUS_TRANSACTION;
-        l_msg       VARCHAR2(1800);
-        l_status    PLS_INTEGER := -1;
-    begin
-        IF (SYSTIMESTAMP - g_last_signal_time) > INTERVAL '10' SECOND THEN
-            DBMS_ALERT.REGISTER(p_registerName);
-            DBMS_ALERT.SIGNAL(p_signalName, p_signalMsg);
-            COMMIT;
-            DBMS_ALERT.WAITONE(p_registerName, l_msg, l_status, p_timeoutSec);
-            DBMS_ALERT.REMOVE(p_registerName);
-            g_last_signal_time := SYSTIMESTAMP;
-        END IF;
-        commit;
-        return l_status;
-        
-    exception
-        when others then
-            rollback;
-            return 1;
-    end;
-    
     --------------------------------------------------------------------------
     
     FUNCTION GET_LATEST_CONFIG(p_timeout_sec IN NUMBER DEFAULT 5) RETURN CLOB IS
@@ -2121,7 +2122,7 @@ dbms_output.put_line('okay');
         -- B. Header für den Report
         l_report := l_line || ' LATEST ACTIVE CONFIGURATION REPORT' || CHR(10) || l_line;
         
-        l_response := waitForResponse('LILA_REQUEST_CONFIG', 'LILA_RESPONSE_CONFIG', 'REQUEST_FROM_' || USER, p_timeout_sec);
+        l_response := waitForResponse('LILA_REQUEST', 'LILA_RESPONSE_CONFIG', 'REQUEST_FROM_' || USER, p_timeout_sec);
         CASE
             WHEN l_response = 'TIMEOUT' THEN
                 l_report := l_report || '-- Warnung: Instanz antwortet nicht (Timeout). Zeige alten Tabellenstand.' || CHR(10);
@@ -2177,11 +2178,9 @@ dbms_output.put_line('okay');
         l_report    CLOB;
         l_line      VARCHAR2(200) := RPAD('-', 120, '-') || CHR(10);
         
-        -- Variablen für den dynamischen Cursor
         l_cursor    SYS_REFCURSOR;
         l_sql       VARCHAR2(2000);
         
-        -- Lokale Variablen für die Zeilenwerte (müssen mit der Tabellenstruktur matchen)
         v_id        NUMBER;
         v_name      VARCHAR2(100);
         v_start     TIMESTAMP;
@@ -2191,7 +2190,7 @@ dbms_output.put_line('okay');
     BEGIN
         l_report := l_line || ' LATEST ACTIVE CONFIGURATION REPORT' || CHR(10) || l_line;
         
-        case waitForSignal('LILA_REQUEST_PERSIST', 'LILA_DATA_PERSISTED', 'REQUEST_FROM_' || USER, p_timeout_sec)
+        case waitForSignal('LILA_REQUEST', 'LILA_DATA_PERSISTED', 'REQUEST_FROM_' || USER, p_timeout_sec)
             when 0 THEN
                 l_report := l_report || '-- Status: Daten frisch von Instanz erhalten.' || CHR(10);
             when 1 then
@@ -2245,6 +2244,168 @@ dbms_output.put_line('okay');
         RETURN l_report;
     END;
    
+	--------------------------------------------------------------------------
+    
+    procedure serverParse_req_newSession(l_message VARCHAR2, l_json_doc VARCHAR2)
+    as
+        l_processId number;
+        l_session_init t_session_init;
+    begin
+        SELECT j.processName, j.logLevel, stepsToDo, daysToKeep, tabNameMaster
+        INTO
+            l_session_init.processName,
+            l_session_init.logLevel,
+            l_session_init.stepsToDo,
+            l_session_init.daysToKeep,
+            l_session_init.tabNameMaster
+
+        FROM JSON_TABLE(l_json_doc, '$'
+            COLUMNS (
+                processName VARCHAR2(100)   PATH '$.PROCESS_NAME',
+                logLevel INTEGER            PATH '$.LOG_LEVEL',
+                stepsToDo INTEGER           PATH '$.STEPS_TODO',
+                daysToKeep INTEGER          PATH '$.LOG_LEVEL',
+                tabNameMaster VARCHAR2(100) PATH '$.LOG_LEVEL'
+            )
+        ) j;
+        
+        l_processId := NEW_SESSION(l_session_init);
+        DBMS_ALERT.SIGNAL('RESPONSE_NEW_SESSION', '{"PROCESS_ID" : ' || l_processId || '}');
+        COMMIT; -- Wichtig: Signal und Daten werden sichtbar
+
+    end;
+
+    
+	--------------------------------------------------------------------------
+    
+    PROCEDURE START_SERVER
+    as
+        l_message   VARCHAR2(1800);
+        l_status    INTEGER;
+        l_timeout   NUMBER := 600; -- Timeout nach 10 Minuten Warten
+        l_pos_start INTEGER;
+        l_pos_end   INTEGER;
+        l_tag       VARCHAR2(100);
+        l_json_doc  VARCHAR2(2000);
+        
+    begin
+        DBMS_ALERT.REGISTER('LILA_REQUEST');
+    
+        LOOP -- DIES IST DIE ENDLOSSCHLEIFE
+            -- 1. In den Standby-Modus gehen und warten
+            -- Der Prozess verbraucht hier keine CPU!
+            DBMS_ALERT.WAITONE('LILA_REQUEST', l_message, l_status, l_timeout);
+    
+            IF l_status = 0 THEN                
+                -- 1. Positionen der Klammern finden
+                l_pos_start := INSTR(l_message, '<');
+                l_pos_end   := INSTR(l_message, '>');
+            
+                IF l_pos_start > 0 AND l_pos_end > l_pos_start THEN
+                    l_tag := SUBSTR(l_message, l_pos_start + 1, l_pos_end - l_pos_start - 1);
+            
+                    -- 3. Das JSON extrahieren (Alles nach dem '>')
+                    
+                    -- Ausgabe zur Kontrolle
+                    DBMS_OUTPUT.PUT_LINE('Tag:  ' || l_tag);
+                    DBMS_OUTPUT.PUT_LINE('JSON: ' || l_json_doc);
+                ELSE
+                    -- Fehlerbehandlung: Keine gültigen Klammern gefunden
+                    l_tag := 'INVALID_FORMAT';
+                    l_json_doc := l_message;
+                END IF;
+                
+                l_json_doc := SUBSTR(l_message, l_pos_end + 1);
+                
+                CASE l_tag
+                    WHEN 'NEW_SESSION' THEN
+                        serverParse_req_newSession(l_message, l_json_doc);
+                                        
+                    WHEN 'FLUSH_CONF'  THEN 
+                        -- Konfigurations-Logik
+                        null;
+                    ELSE 
+                        -- Unbekanntes Tag loggen
+                        null;
+                END CASE;
+                COMMIT; -- Wichtig: Signal und Daten werden sichtbar
+               
+    
+                -- 3. Antwort-Signal an den Anfragenden zurücksenden
+                DBMS_ALERT.SIGNAL('RESPONSE_NEW_SESSION', 'DATA_READY');
+                COMMIT; -- Wichtig: Signal und Daten werden sichtbar
+    
+            ELSIF l_status = 1 THEN
+                -- Timeout erreicht. Passiert, wenn 10 Minuten kein Signal kam.
+                -- Wir loggen das evtl. kurz, dann geht die Schleife von vorne los.
+                DBMS_OUTPUT.PUT_LINE('Timeout erreicht. Warte weiter...');
+    
+            ELSE
+                -- Anderer Fehler
+                DBMS_OUTPUT.PUT_LINE('Fehler beim Warten: ' || l_status);
+            END IF;
+    
+        END LOOP;
+    
+        -- Dieser Teil wird nie erreicht, solange die DB-Session aktiv ist
+        DBMS_ALERT.REMOVE('LILA_REQUEST_PERSIST');
+    EXCEPTION
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('Kritischer Fehler in der Daemon-Schleife: ' || SQLERRM);
+            -- Hier müsste man ggf. Loggen und entscheiden, ob man RAISE; macht oder die Schleife beendet.
+    end;
+    
+	--------------------------------------------------------------------------
+    
+    FUNCTION SERVER_NEW_SESSION(p_session_init t_session_init) RETURN NUMBER
+    as
+        -- Response: {"PROCESS_ID" : 2000}
+        l_ProcessId number(19,0);   
+        l_request   varchar2(1800);
+        l_response  varchar2(1800);
+        l_json_doc  VARCHAR2(2000);
+    begin
+    
+        l_request := '<NEW_SESSION>';
+        l_request := l_request || '{"PROCESS_NAME" : "' || p_session_init.processName || '"';
+        l_request := l_request || ', "LOG_LEVEL" : ' || p_session_init.logLevel;
+        l_request := l_request || ', "STEPS_TODO" : ' || p_session_init.stepsToDo;
+        l_request := l_request || ', "TABNAME_MASTER" : "' || p_session_init.tabNameMaster || '"}';
+        
+        l_response := waitForResponse('RESPONSE_NEW_SESSION', 'LILA_REQUEST', l_request, 5);
+        CASE
+            WHEN l_response = 'TIMEOUT' THEN
+                l_ProcessId := -110;
+            WHEN l_response = 'THROTTLED' THEN
+                l_ProcessId := -120;                
+            WHEN l_response LIKE 'ERROR%' THEN
+                l_ProcessId := - 100;
+            else
+            -- Erfolgsfall: JSON parsen
+            l_json_doc := '{' || l_response || '}';
+            BEGIN
+                SELECT j.*
+                INTO l_ProcessId
+                FROM JSON_TABLE(l_json_doc, '$'
+                    COLUMNS (
+                        f_processId NUMBER PATH '$.PROCESS_ID'
+                    )
+                ) j;
+                    
+            EXCEPTION
+                WHEN OTHERS THEN
+                    l_ProcessId := -200;
+            END;
+        end case;
+
+        RETURN l_ProcessId;
+        
+    EXCEPTION
+        WHEN OTHERS THEN
+        return -200;
+    end;
+
+    ------------------------------------------------------------------------
     
     PROCEDURE IS_ALIVE
     as
