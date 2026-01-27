@@ -88,6 +88,10 @@ create or replace PACKAGE LILA AS
     FUNCTION list_active_sessions(p_timeout_sec IN NUMBER DEFAULT 5) RETURN CLOB;
 
 
+    PROCEDURE START_SERVER;
+    procedure SERVER_SEND_ANY_MSG(p_message varchar2);
+
+
     ----------
     -- Testing
     ----------
