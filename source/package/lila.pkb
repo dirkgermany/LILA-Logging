@@ -141,6 +141,9 @@ create or replace PACKAGE BODY LILA AS
     
     -- Throttling for SIGNALs
     g_last_signal_time TIMESTAMP := SYSTIMESTAMP - INTERVAL '1' DAY;
+    
+    -- Id for Server communication
+    g_clientId number := 10;
 
     ---------------------------------------------------------------
     -- Placeholders for tables
@@ -162,8 +165,10 @@ create or replace PACKAGE BODY LILA AS
     -- Avoid throttling 
 	--------------------------------------------------------------------------
     function waitForResponse(
+        p_clientId      in number,
         p_serverChannel IN varchar2, -- Der Kanal, auf dem der Server hört (LILA_REQUEST)
         p_clientChannel IN varchar2, -- Der Kanal, auf dem der Client auf Antwort wartet (ANY_MSG)
+        p_request       in varchar2,
         p_payload       IN varchar2, 
         p_timeoutSec    IN number
     ) return varchar2
@@ -171,19 +176,31 @@ create or replace PACKAGE BODY LILA AS
         PRAGMA AUTONOMOUS_TRANSACTION;
         l_msg       VARCHAR2(1800);
         l_status    PLS_INTEGER;
+        l_token     varchar2(50);
+        l_header    varchar2(100);
+        l_meta      varchar2(100);
+        l_data      varchar2(1500);
     begin
+        l_token := p_clientChannel || '->' || trim(to_char(p_clientId));
+        
+        l_header := '"header":{"request":"' || p_request || '", "response":"' || l_token ||'"}';
+        l_meta  := '"meta":{"clientId":' || p_clientId || '}';
+        l_data  := '"payload":{' || p_payLoad || '"}';
+        
+        l_msg := '{ ' || l_header || ', ' || l_meta || l_data || ' }';
+    
         -- 1. Zuerst registrieren, damit wir die Antwort nicht verpassen!
-        DBMS_ALERT.REGISTER(p_clientChannel);
+        DBMS_ALERT.REGISTER(l_token);
     
         -- 2. Jetzt dem Server das Signal schicken
         -- Wir schicken z.B. '<ANY_MSG>Daten'
-        DBMS_ALERT.SIGNAL(p_serverChannel, p_payload);
+        DBMS_ALERT.SIGNAL(p_serverChannel, l_msg);
         COMMIT; -- Signal für Server sichtbar machen
     
         -- 3. Auf Antwort vom Server auf dem Client-Kanal warten
-        DBMS_ALERT.WAITONE(p_clientChannel, l_msg, l_status, p_timeoutSec);
+        DBMS_ALERT.WAITONE(l_token, l_msg, l_status, p_timeoutSec);
         
-        DBMS_ALERT.REMOVE(p_clientChannel);
+        DBMS_ALERT.REMOVE(l_token);
         COMMIT; 
         
         IF l_status = 1 THEN RETURN 'TIMEOUT'; END IF;
@@ -2106,7 +2123,14 @@ dbms_output.put_line('okay');
         -- B. Header für den Report
         l_report := l_line || ' LATEST ACTIVE CONFIGURATION REPORT' || CHR(10) || l_line;
         
-        l_response := waitForResponse('LILA_REQUEST', 'LILA_RESPONSE_CONFIG', 'REQUEST_FROM_' || USER, p_timeout_sec);
+                p_clientId      in number,
+        p_serverChannel IN varchar2, -- Der Kanal, auf dem der Server hört (LILA_REQUEST)
+        p_clientChannel IN varchar2, -- Der Kanal, auf dem der Client auf Antwort wartet (ANY_MSG)
+        p_request       in varchar2,
+        p_payload       IN varchar2, 
+        p_timeoutSec    IN number
+
+        l_response := waitForResponse(g_clientId, 'LILA_REQUEST', 'LILA_RESPONSE_CONFIG', 'REQUEST_FROM_' || USER, p_timeout_sec);
         CASE
             WHEN l_response = 'TIMEOUT' THEN
                 l_report := l_report || '-- Warnung: Instanz antwortet nicht (Timeout). Zeige alten Tabellenstand.' || CHR(10);
@@ -2230,7 +2254,27 @@ dbms_output.put_line('okay');
    
 	--------------------------------------------------------------------------
     
-    procedure serverParse_req_newSession(l_message VARCHAR2, l_json_doc VARCHAR2)
+    function extractClientId(l_message varchar2, l_json_doc varchar2) return PLS_INTEGER
+    as
+        l_clientId PLS_INTEGER;
+    begin
+        SELECT j.clientId
+        INTO
+            l_clientId
+
+        FROM JSON_TABLE(l_json_doc, '$'
+            COLUMNS (
+                clientId number  PATH '$.CLIENT_ID'
+            )
+        ) j;
+        
+        return l_clientId;
+
+    end;        
+    
+	--------------------------------------------------------------------------
+    
+    procedure serverProcessReq_newSession(l_clientId PLS_INTEGER, l_message VARCHAR2, l_json_doc VARCHAR2)
     as
         l_processId number;
         l_session_init t_session_init;
@@ -2254,16 +2298,96 @@ dbms_output.put_line('okay');
         ) j;
         
         l_processId := NEW_SESSION(l_session_init);
-        DBMS_ALERT.SIGNAL('RESPONSE_NEW_SESSION', '{"PROCESS_ID" : ' || l_processId || '}');
+        DBMS_ALERT.SIGNAL('LILA_RESPONSE_NEW_SESSION->' || l_clientId, '{"PROCESS_ID" : ' || l_processId || '}');
         COMMIT; -- Wichtig: Signal und Daten werden sichtbar
 
     end;
 
+	--------------------------------------------------------------------------
+    
+    procedure SERVER_SEND_ANY_MSG(p_message varchar2)
+    as
+        l_response varchar2(1000);
+    begin
+        dbms_output.enable();
+        l_response := waitForResponse(
+            p_clientId      => g_clientId,
+            p_serverChannel => 'LILA_REQUEST',
+            p_clientChannel => 'LILA_RESPONSE_ANY_MSG',
+            p_payload       => '<ANY_MSG>' || p_message,
+            p_timeoutSec    => 5
+        );
+
+        
+        l_response := waitForResponse(
+            p_serverChannel => 'LILA_REQUEST',
+            p_clientChannel => 'LILA_RESPONSE_ANY_MSG',
+            p_payload       => '<EXIT>' || p_message,
+            p_timeoutSec    => 5
+        );
+                
+        dbms_output.put_line(l_response);
+    end;
+    
+	--------------------------------------------------------------------------   
+    
+    
+	--------------------------------------------------------------------------    
+    
+    FUNCTION SERVER_NEW_SESSION(p_session_init t_session_init) RETURN NUMBER
+    as
+        -- Response: {"PROCESS_ID" : 2000}
+        l_ProcessId number(19,0) := -500;   
+        l_request   varchar2(1800);
+        l_response  varchar2(1800);
+        l_json_doc  VARCHAR2(2000);
+    begin
+    
+        l_request := '<NEW_SESSION>';
+        l_request := l_request || '{"CLIENT_ID" : ' || g_clientId;
+        l_request := l_request || ', "PROCESS_NAME" : "' || p_session_init.processName || '"';
+        l_request := l_request || ', "LOG_LEVEL" : ' || p_session_init.logLevel;
+        l_request := l_request || ', "STEPS_TODO" : ' || p_session_init.stepsToDo;
+        l_request := l_request || ', "TABNAME_MASTER" : "' || p_session_init.tabNameMaster || '"}';
+        
+        l_response := waitForResponse(g_clientId, 'LILA_REQUEST', 'LILA_RESPONSE_NEW_SESSION', l_request, 5);
+        CASE
+            WHEN l_response = 'TIMEOUT' THEN
+                l_ProcessId := -110;
+            WHEN l_response = 'THROTTLED' THEN
+                l_ProcessId := -120;                
+            WHEN l_response LIKE 'ERROR%' THEN
+                l_ProcessId := - 100;
+            else
+            -- Erfolgsfall: JSON parsen
+            l_json_doc := '{' || l_response || '}';
+            BEGIN
+                SELECT j.*
+                INTO l_ProcessId
+                FROM JSON_TABLE(l_json_doc, '$'
+                    COLUMNS (
+                        f_processId NUMBER PATH '$.PROCESS_ID'
+                    )
+                ) j;
+                    
+            EXCEPTION
+                WHEN OTHERS THEN
+                    l_ProcessId := -200;
+            END;
+        end case;
+
+        RETURN l_ProcessId;
+        
+    EXCEPTION
+        WHEN OTHERS THEN
+        return -200;
+    end;
     
 	--------------------------------------------------------------------------
     
     PROCEDURE START_SERVER
     as
+        l_clientId  PLS_INTEGER;
         l_message   VARCHAR2(1800);
         l_status    INTEGER;
         l_timeout   NUMBER := 600; -- Timeout nach 10 Minuten Warten
@@ -2300,22 +2424,23 @@ dbms_output.put_line('okay');
                 END IF;
                 
                 l_json_doc := SUBSTR(l_message, l_pos_end + 1);
+                l_clientId := extractClientId(l_message, l_json_doc);
                 
                 CASE l_tag
                     WHEN 'EXIT' then
-                        DBMS_ALERT.SIGNAL('ANY_MSG', 'Bla');
+                        DBMS_ALERT.SIGNAL('LILA_RESPONSE_ANY_MSG->' || trim(to_char(l_clientId)), 'Bla');
                         COMMIT; -- Wichtig: Signal und Daten werden sichtbar
                         exit;
                         
                     WHEN 'ANY_MSG' then
                         dbms_output.enable();
                         dbms_output.put_line('logisch');
-                        DBMS_ALERT.SIGNAL('ANY_MSG', 'Bla');
+                        DBMS_ALERT.SIGNAL('LILA_RESPONSE_ANY_MSG->' || trim(to_char(l_clientId)), 'Bla');
                         COMMIT; -- Wichtig: Signal und Daten werden sichtbar
                         
                         
                     WHEN 'NEW_SESSION' THEN
-                        serverParse_req_newSession(l_message, l_json_doc);
+                        serverProcessReq_newSession(l_clientId, l_message, l_json_doc);
                                         
                     WHEN 'FLUSH_CONF'  THEN 
                         -- Konfigurations-Logik
@@ -2345,81 +2470,6 @@ dbms_output.put_line('okay');
         WHEN OTHERS THEN
             DBMS_OUTPUT.PUT_LINE('Kritischer Fehler in der Daemon-Schleife: ' || SQLERRM);
             -- Hier müsste man ggf. Loggen und entscheiden, ob man RAISE; macht oder die Schleife beendet.
-    end;
-    
-	--------------------------------------------------------------------------
-    
-    procedure SERVER_SEND_ANY_MSG(p_message varchar2)
-    as
-        l_response varchar2(1000);
-    begin
-        dbms_output.enable();
-        l_response := waitForResponse(
-            p_serverChannel => 'LILA_REQUEST',
-            p_clientChannel => 'ANY_MSG',
-            p_payload       => '<ANY_MSG>' || p_message,
-            p_timeoutSec    => 5
-        );
-
-        
-        l_response := waitForResponse(
-            p_serverChannel => 'LILA_REQUEST',
-            p_clientChannel => 'ANY_MSG',
-            p_payload       => '<EXIT>' || p_message,
-            p_timeoutSec    => 5
-        );
-                
-        dbms_output.put_line(l_response);
-    end;
-    
-	--------------------------------------------------------------------------    
-    
-    FUNCTION SERVER_NEW_SESSION(p_session_init t_session_init) RETURN NUMBER
-    as
-        -- Response: {"PROCESS_ID" : 2000}
-        l_ProcessId number(19,0);   
-        l_request   varchar2(1800);
-        l_response  varchar2(1800);
-        l_json_doc  VARCHAR2(2000);
-    begin
-    
-        l_request := '<NEW_SESSION>';
-        l_request := l_request || '{"PROCESS_NAME" : "' || p_session_init.processName || '"';
-        l_request := l_request || ', "LOG_LEVEL" : ' || p_session_init.logLevel;
-        l_request := l_request || ', "STEPS_TODO" : ' || p_session_init.stepsToDo;
-        l_request := l_request || ', "TABNAME_MASTER" : "' || p_session_init.tabNameMaster || '"}';
-        
-        l_response := waitForResponse('RESPONSE_NEW_SESSION', 'LILA_REQUEST', l_request, 5);
-        CASE
-            WHEN l_response = 'TIMEOUT' THEN
-                l_ProcessId := -110;
-            WHEN l_response = 'THROTTLED' THEN
-                l_ProcessId := -120;                
-            WHEN l_response LIKE 'ERROR%' THEN
-                l_ProcessId := - 100;
-            else
-            -- Erfolgsfall: JSON parsen
-            l_json_doc := '{' || l_response || '}';
-            BEGIN
-                SELECT j.*
-                INTO l_ProcessId
-                FROM JSON_TABLE(l_json_doc, '$'
-                    COLUMNS (
-                        f_processId NUMBER PATH '$.PROCESS_ID'
-                    )
-                ) j;
-                    
-            EXCEPTION
-                WHEN OTHERS THEN
-                    l_ProcessId := -200;
-            END;
-        end case;
-
-        RETURN l_ProcessId;
-        
-    EXCEPTION
-        WHEN OTHERS THEN
-        return -200;
     end;
 
     ------------------------------------------------------------------------
