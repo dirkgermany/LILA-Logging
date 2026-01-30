@@ -84,11 +84,10 @@ create or replace PACKAGE LILA AS
     FUNCTION GET_METRIC_AVG_DURATION(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER;
     FUNCTION GET_METRIC_STEPS(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER;
     
-    
-    FUNCTION list_active_sessions(p_timeout_sec IN NUMBER DEFAULT 5) RETURN CLOB;
-
 
     PROCEDURE START_SERVER;
+    FUNCTION SERVER_NEW_SESSION(p_payload varchar2) RETURN NUMBER;
+
     procedure SERVER_SEND_ANY_MSG(p_message varchar2);
     procedure SERVER_SEND_EXIT(p_message varchar2);
 
