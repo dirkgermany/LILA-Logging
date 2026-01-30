@@ -39,8 +39,8 @@ create or replace PACKAGE BODY LILA AS
     ---------------------------------------------------------------
     TYPE t_process_cache_map IS TABLE OF t_process_rec INDEX BY PLS_INTEGER;
     g_process_cache t_process_cache_map;
-    g_process_dirty_count PLS_INTEGER := 0; 
-    g_last_process_flush  TIMESTAMP;
+--    g_process_dirty_count PLS_INTEGER := 0; 
+--    g_last_process_flush  TIMESTAMP;
 
     ---------------------------------------------------------------
     -- Monitoring
@@ -212,6 +212,9 @@ create or replace PACKAGE BODY LILA AS
         IF l_statusReceive = 0 THEN
             DBMS_PIPE.UNPACK_MESSAGE(l_msg);
         END IF;
+        
+        DBMS_PIPE.PURGE(l_clientChannel);
+        l_status := DBMS_PIPE.REMOVE_PIPE(l_clientChannel);
         
         IF l_statusReceive = 1 THEN RETURN 'TIMEOUT'; END IF;
         return l_msg;
@@ -1453,9 +1456,9 @@ create or replace PACKAGE BODY LILA AS
     
     exception
         when others then
-            if should_raise_error(p_processId) then
+--            if should_raise_error(p_processId) then
                 raise;
-            end if;
+--            end if;
     end;    
 	--------------------------------------------------------------------------
 
@@ -1862,6 +1865,12 @@ create or replace PACKAGE BODY LILA AS
                 -- Eintrag aus internem Speicher entfernen
                 g_sessionList.delete(v_indexSession(p_processId));
                 v_indexSession.delete(p_processId); -- Auch den Index-Eintrag entfernen!
+                
+    dbms_output.enable();
+    dbms_output.put_line('Anzahl Processe im Cache vor Löschen: ' || g_process_cache.count);
+    dbms_output.put_line('Löschen g_process_cache für ' || p_processId);
+                g_process_cache.delete(p_processId);
+    dbms_output.put_line('Anzahl Processe im Cache nach Löschen: ' || g_process_cache.count);
 --            end if;
         end if;
     end;
@@ -2163,24 +2172,24 @@ create or replace PACKAGE BODY LILA AS
 
     PROCEDURE START_SERVER
     as
-v_key VARCHAR2(100); 
+        v_key VARCHAR2(100); 
         l_clientChannel  varchar2(30);
         l_message       VARCHAR2(32767);
         l_status    PLS_INTEGER;
-        l_timeout   NUMBER := 10; -- Timeout nach Sekunden Warten auf Nachricht
+        l_timeout   NUMBER := 3; -- Timeout nach Sekunden Warten auf Nachricht
         l_request   VARCHAR2(100);
         l_json_doc  VARCHAR2(2000);        
         l_dummyRes PLS_INTEGER;
         l_exitSignal BOOLEAN := FALSE;
         l_stop_server_exception EXCEPTION;
     begin
-        g_serverProcessId := NEW_SESSION('LILA_SERVER', logLevelDebug);
-    
+        g_serverProcessId := new_session('LILA_REMOTE_SERVER', logLevelWarn);
         -- Pipe erstellen (Public oder Private, Kapazität hier 1MB für High-Load)
+        DBMS_PIPE.PURGE(g_pipeName); 
         l_dummyRes := DBMS_PIPE.REMOVE_PIPE(g_pipeName);
         l_dummyRes := DBMS_PIPE.CREATE_PIPE(pipename => g_pipeName, maxpipesize => 1048576, private => false);
         
-        LOOP -- DIES IST DIE ENDLOSSCHLEIFE
+        LOOP
             -- Warten auf die nächste Nachricht (Timeout in Sekunden)
             l_status := DBMS_PIPE.RECEIVE_MESSAGE(g_pipeName, timeout => l_timeout);
             IF l_status = 0 THEN
