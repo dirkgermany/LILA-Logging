@@ -39,8 +39,6 @@ create or replace PACKAGE BODY LILA AS
     ---------------------------------------------------------------
     TYPE t_process_cache_map IS TABLE OF t_process_rec INDEX BY PLS_INTEGER;
     g_process_cache t_process_cache_map;
---    g_process_dirty_count PLS_INTEGER := 0; 
---    g_last_process_flush  TIMESTAMP;
 
     ---------------------------------------------------------------
     -- Monitoring
@@ -110,12 +108,19 @@ create or replace PACKAGE BODY LILA AS
 
     -- general Flush Time-Duration
     g_flush_millis_threshold PLS_INTEGER            := 1500; 
-    g_flush_log_threshold PLS_INTEGER               := 100;
+    g_flush_log_threshold PLS_INTEGER               := 12500;
+    g_flush_process_threshold PLS_INTEGER           := 5000;
+    g_max_entries_per_monitor_action PLS_INTEGER    := 2500; -- Round Robin: Max. Anzahl Einträge für eine Aktion je Action
+    g_flush_monitor_threshold PLS_INTEGER           := 2500; -- Max. Anzahl Monitoreinträge für das Flush
+    g_monitor_alert_threshold_factor NUMBER         := 2.0; -- Max. Ausreißer in der Dauer eines Verarbeitungsschrittes
+/*
+    g_flush_millis_threshold PLS_INTEGER            := 1500; 
+    g_flush_log_threshold PLS_INTEGER               := 1000;
     g_flush_process_threshold PLS_INTEGER           := 100;
     g_max_entries_per_monitor_action PLS_INTEGER    := 1000; -- Round Robin: Max. Anzahl Einträge für eine Aktion je Action
     g_flush_monitor_threshold PLS_INTEGER           := 100; -- Max. Anzahl Monitoreinträge für das Flush
     g_monitor_alert_threshold_factor NUMBER         := 2.0; -- Max. Ausreißer in der Dauer eines Verarbeitungsschrittes
-    
+*/   
     -- Throttling for SIGNALs
     g_last_signal_time TIMESTAMP := SYSTIMESTAMP - INTERVAL '1' DAY;
     
