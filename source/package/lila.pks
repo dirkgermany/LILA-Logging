@@ -98,7 +98,7 @@ LILA_VERSION constant varchar2(20) := 'v1.3.0';
     FUNCTION SERVER_NEW_SESSION(p_payload varchar2) RETURN NUMBER;
 
     procedure SERVER_SEND_ANY_MSG(p_message varchar2);
-    procedure SERVER_SEND_EXIT(p_message varchar2);
+    procedure SERVER_SHUTDOWN(p_message varchar2);
 
 
     ----------
