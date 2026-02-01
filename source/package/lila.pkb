@@ -87,16 +87,23 @@ create or replace PACKAGE BODY LILA AS
     ---------------------------------------------------------------
     -- Automatisierte Lastverteilung
     ---------------------------------------------------------------
- 
-TYPE t_pipe_slot IS RECORD (
-    pipe_name   VARCHAR2(30),
-    is_active   BOOLEAN := FALSE,
-    last_seen   TIMESTAMP
-);
-TYPE t_pipe_pool IS TABLE OF t_pipe_slot INDEX BY PLS_INTEGER;
-
--- Definition der physikalischen Slots (z.B. 1-4)
-g_pipe_pool t_pipe_pool; 
+    TYPE t_pipe_slot IS RECORD (
+        pipe_name   VARCHAR2(30),
+        is_active   BOOLEAN := FALSE,
+        last_seen   TIMESTAMP
+    );
+    TYPE t_pipe_pool IS TABLE OF t_pipe_slot INDEX BY PLS_INTEGER;
+    
+    -- Definition der physikalischen Slots (hier erstmal 3)
+    g_pipe_pool t_pipe_pool := t_pipe_pool(
+        1 => t_pipe_slot(pipe_name => 'LILA_P1', is_active => FALSE),
+        2 => t_pipe_slot(pipe_name => 'LILA_P2', is_active => FALSE),
+        3 => t_pipe_slot(pipe_name => 'LILA_P3', is_active => FALSE)
+    );
+    
+    TYPE t_routing_map IS TABLE OF PLS_INTEGER INDEX BY VARCHAR2(50); 
+    g_routing_cache t_routing_map;
+    g_current_slot_idx PLS_INTEGER := 0;
     
     ---------------------------------------------------------------
     -- General Variables
@@ -107,7 +114,7 @@ g_pipe_pool t_pipe_pool;
     g_alertCode_Flush CONSTANT varchar2(25) := 'LILA_ALERT_FLUSH_CFG';
     g_alertCode_Read  CONSTANT varchar2(25) := 'LILA_ALERT_READ_CFG';
     
-    g_pipeName      CONSTANT VARCHAR2(30) := 'LILA_REQUEST_PIPE';
+    g_pipeName  VARCHAR2(30) := 'LILA_REQUEST_PIPE';
 
     -- general Flush Time-Duration
     g_flush_millis_threshold PLS_INTEGER            := 1500;  -- Max. Millisekunden bis zum Flush
@@ -145,6 +152,7 @@ g_pipe_pool t_pipe_pool;
     function extractFromJsonStr(p_json_doc varchar2, jsonPath varchar2) return varchar2;
     function extractFromJsonNum(p_json_doc varchar2, jsonPath varchar2) return number;
     procedure flushMonitor(p_processId number);
+    function pingServer(p_pipeName varchar2) return boolean;
     
     ---------------------------------------------------------------
     -- Antwort Codes stabil vereinheitlichen
@@ -154,6 +162,7 @@ g_pipe_pool t_pipe_pool;
         IF g_response_codes.COUNT = 0 THEN
             g_response_codes(TXT_ACK_SHUTDOWN) := NUM_ACK_SHUTDOWN;
             g_response_codes(TXT_ACK_OK)       := NUM_ACK_OK;
+            g_response_codes(TXT_PING_ECHO)    := NUM_PING_ECHO;
         END IF;
     END initialize_map;
     
@@ -213,11 +222,52 @@ g_pipe_pool t_pipe_pool;
         'FM999999999999999'
     );
     end;
-        
+    
+    --------------------------------------------------------------------------
+    -- Look for free Server-Pipe 
+	--------------------------------------------------------------------------
+function getPipeForSession(p_processId number) return varchar2 
+as
+    l_key     varchar2(50) := nvl(to_char(p_processId), 'INITIAL_HANDSHAKE');
+    l_slotIdx PLS_INTEGER;
+begin
+    -- 1. Cache-Check (PGA)
+    IF g_routing_cache.EXISTS(l_key) THEN
+        l_slotIdx := g_routing_cache(l_key);
+    ELSE
+        -- 2. Discovery-Check: Suche ersten aktiven Slot
+        FOR i IN 1..g_pipe_pool.COUNT LOOP
+            g_current_slot_idx := MOD(nvl(g_current_slot_idx, 0), g_pipe_pool.COUNT) + 1;
+            IF g_pipe_pool(g_current_slot_idx).is_active THEN
+                l_slotIdx := g_current_slot_idx;
+                EXIT;
+            END IF;
+        END LOOP;
+
+        -- 3. Ultimativer Fallback (Verhindert ORA-20003)
+        IF l_slotIdx IS NULL THEN
+            -- Wenn kein aktiver Server da ist, nehmen wir Slot 1 (Blind-Start)
+            g_current_slot_idx := MOD(nvl(g_current_slot_idx, 0), g_pipe_pool.COUNT) + 1;
+            l_slotIdx := g_current_slot_idx;
+        END IF;
+
+        -- Mapping für die Dauer der Session/ID merken
+        g_routing_cache(l_key) := l_slotIdx;
+    END IF;
+
+    -- Sicherheits-Check: Existiert der Slot in der Liste?
+    RETURN g_pipe_pool(l_slotIdx).pipe_name;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        -- Wenn alles reißt: Hardcoded Pipe zurückgeben
+        RETURN 'LILA_P1'; 
+end;
     --------------------------------------------------------------------------
     -- Avoid throttling 
 	--------------------------------------------------------------------------
     function waitForResponse(
+        p_processId   in number,
         p_request       in varchar2, -- Wird für die Zuordnung/Verzweigung im Server benötigt
         p_payload       IN varchar2, 
         p_timeoutSec    IN PLS_INTEGER
@@ -230,6 +280,9 @@ g_pipe_pool t_pipe_pool;
         l_header    varchar2(100);
         l_meta      varchar2(100);
         l_data      varchar2(1500);
+        l_pipeName  varchar2(100);
+        l_key       varchar2(50);
+        l_slotIdx PLS_INTEGER;
     begin
         l_clientChannel := getRequestKey;
         
@@ -238,8 +291,12 @@ g_pipe_pool t_pipe_pool;
         l_data  := '"payload":' || p_payLoad;
         l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
         
+ --       l_key := nvl(to_char(p_processId), 'INITIAL_HANDSHAKE'); 
+l_pipeName := getPipeForSession(null);
+
+        
         DBMS_PIPE.PACK_MESSAGE(l_msg);
-        l_status := DBMS_PIPE.SEND_MESSAGE(g_pipeName, timeout => 3);
+        l_status := DBMS_PIPE.SEND_MESSAGE(l_pipeName, timeout => 3);
         l_statusReceive := DBMS_PIPE.RECEIVE_MESSAGE(l_clientChannel, timeout => p_timeoutSec);
         IF l_statusReceive = 0 THEN
             DBMS_PIPE.UNPACK_MESSAGE(l_msg);
@@ -251,9 +308,53 @@ g_pipe_pool t_pipe_pool;
         IF l_statusReceive = 1 THEN RETURN 'TIMEOUT'; END IF;
         return l_msg;
     end;
+    
+    ---------------------------------------------------------------
+    -- Aktive Server markieren
+    ---------------------------------------------------------------
+    function pingServer(p_pipeName varchar2) return boolean
+    as
+        l_msg       VARCHAR2(4000);
+        l_status    PLS_INTEGER;
+        l_statusReceive PLS_INTEGER;
+        l_clientChannel  varchar2(50);
+        l_header    varchar2(100);
+        l_meta      varchar2(100);
+        l_data      varchar2(1500);
+    begin
+        l_clientChannel := getRequestKey;
+        
+        l_header := '"header":{"msg_type":"API_CALL", "request":"' || 'SERVER_PING' || '", "response":"' || l_clientChannel ||'"}';
+        l_meta  := '"meta":{"param":"value"}';
+        l_data  := '"payload":"{}"';
+        l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
+        
+        DBMS_PIPE.PACK_MESSAGE(l_msg);
+        l_status := DBMS_PIPE.SEND_MESSAGE(p_pipeName, timeout => 3);
+        l_statusReceive := DBMS_PIPE.RECEIVE_MESSAGE(l_clientChannel, timeout => 2);
+        IF l_statusReceive = 0 THEN
+            DBMS_PIPE.UNPACK_MESSAGE(l_msg);
+        END IF;
+        
+        DBMS_PIPE.PURGE(l_clientChannel);
+        l_status := DBMS_PIPE.REMOVE_PIPE(l_clientChannel);
+        
+        IF l_statusReceive = 1 THEN RETURN FALSE; END IF;
+        return TRUE;
+    end;
 
+    PROCEDURE discovery_active_servers IS
+    BEGIN
+        FOR i IN 1..g_pipe_pool.COUNT LOOP
+            -- Sende PING an g_pipe_pool(i).pipe_name
+            -- Wenn Antwort innerhalb von 100ms kommt:
+            if pingServer(g_pipe_pool(i).pipe_name) then
+                g_pipe_pool(i).is_active := TRUE;
+            end if;
+        END LOOP;
+    END;
 
-    procedure send_sync_signal
+    procedure send_sync_signal(p_processId number)
     as
         l_response varchar2(1000);
         l_timestampBefore TIMESTAMP;
@@ -262,7 +363,7 @@ g_pipe_pool t_pipe_pool;
         dbms_output.enable();
         l_timestampBefore := systimestamp;
 --        dbms_output.put_line('send sync signal: ' || l_timestampBefore);
-        l_response := waitForResponse('UNFREEZE_REQUEST', '{}', 10);
+        l_response := waitForResponse(p_processId, 'UNFREEZE_REQUEST', '{}', 10);
         l_diffMillis := get_ms_diff(l_timestampBefore, systimestamp);
         if (upper(l_response) = 'TIMEOUT') then
             null;
@@ -282,7 +383,8 @@ g_pipe_pool t_pipe_pool;
     --------------------------------------------------------------------------
     -- Auf die Bremse treten, wenn Client zu schnell sendet
 	--------------------------------------------------------------------------
-    PROCEDURE stabilizeInLowPerfEnvironments IS
+    PROCEDURE stabilizeInLowPerfEnvironments(p_processId number)
+    IS
         l_now TIMESTAMP := SYSTIMESTAMP;
         l_diff_millis PLS_INTEGER;
     BEGIN
@@ -298,7 +400,7 @@ g_pipe_pool t_pipe_pool;
                     dbms_output.enable();
                     dbms_output.put_line('Server braucht Luft');
                     -- Stoppe die Flut, um dem Server Luft zu verschaffen
-                    send_sync_signal;
+                    send_sync_signal(p_processId);
 --                    DBMS_SESSION.SLEEP(C_THROTTLE_SLEEP);
                 END IF;
     
@@ -309,27 +411,36 @@ g_pipe_pool t_pipe_pool;
         END IF;
     END;
 
-    
+    --------------------------------------------------------------------------
+    -- Nachricht an Server Fire&Forget
+	--------------------------------------------------------------------------
     procedure sendNoWait(
+        p_processId     in number,
         p_request       in varchar2, -- Wird für die Zuordnung/Verzweigung im Server benötigt
         p_payload       IN varchar2, 
         p_timeoutSec    IN PLS_INTEGER
     )
     as        
+        l_pipeName  VARCHAR2(100);
         l_msg       VARCHAR2(1800);
         l_header    varchar2(140);
         l_meta      varchar2(140);
         l_data      varchar2(1500);
         l_status    PLS_INTEGER;
+        l_now              TIMESTAMP := SYSTIMESTAMP;
+        l_retryInterval    INTERVAL DAY TO SECOND := INTERVAL '30' SECOND;
     begin
-        stabilizeInLowPerfEnvironments;
+        stabilizeInLowPerfEnvironments(p_processId);
         l_header := '"header":{"msg_type":"API_CALL", "request":"' || p_request || '"}';
         l_meta  := '"meta":{"param":"value"}';
         l_data  := '"payload":' || p_payLoad;
         
         l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
+            
+        l_pipeName := getPipeForSession(p_processId);
+            
         DBMS_PIPE.PACK_MESSAGE(l_msg);
-        l_status := DBMS_PIPE.SEND_MESSAGE(g_pipeName, timeout => p_timeoutSec);
+        l_status := DBMS_PIPE.SEND_MESSAGE(l_pipeName, timeout => p_timeoutSec);
         IF l_status != 0 THEN
             null;
         END IF;
@@ -1068,7 +1179,7 @@ BEGIN
             returning varchar2
         )
         into l_payload from dual;
-        sendNoWait('MARK_STEP', l_payload, 0);
+        sendNoWait(p_processId, 'MARK_STEP', l_payload, 0);
                 
     EXCEPTION
         WHEN OTHERS THEN
@@ -1575,7 +1686,7 @@ BEGIN
         )
         into l_payload from dual;
         
-        l_response := waitForResponse('CLOSE_SESSION', l_payload, 1);
+        l_response := waitForResponse(p_processId, 'CLOSE_SESSION', l_payload, 1);
         
         if l_response in ('TIMEOUT', 'THROTTLED') or
            l_response like 'ERROR%' then
@@ -1610,7 +1721,7 @@ BEGIN
             returning varchar2
         )
         into l_payload from dual;
-        sendNoWait('LOG_ANY', l_payload, 0);
+        sendNoWait(p_processId, 'LOG_ANY', l_payload, 0);
                 
     EXCEPTION
         WHEN OTHERS THEN
@@ -2232,6 +2343,36 @@ BEGIN
     end;    
 
 	-------------------------------------------------------------------------- 
+        
+    procedure doRemote_pingEcho(p_clientChannel varchar2, p_message VARCHAR2)
+    as
+        l_processId number;
+        l_payload varchar2(1600);
+        l_session_init t_session_init;
+        l_status PLS_INTEGER;
+        l_header varchar2(100);
+        l_meta   varchar2(100);
+        l_data   varchar2(100);
+        l_msg    varchar2(500);
+    begin
+        l_header := '"header":{"msg_type":"SERVER_RESPONSE"}';
+        l_meta   := '"meta":{"server_version":"' || LILA_VERSION || '"}';
+        l_data   := '"payload":{"server_message":"' || TXT_PING_ECHO || '", ' || get_serverCode(TXT_PING_ECHO);
+        l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
+
+        -- no payload, client waits only for unfreezing
+        DBMS_PIPE.RESET_BUFFER; -- Koffer leeren
+        DBMS_PIPE.PACK_MESSAGE(l_msg);        
+        l_status := DBMS_PIPE.SEND_MESSAGE(p_clientChannel, timeout => 0);
+        
+    exception
+        when others then
+            dbms_output.enable();
+            dbms_output.put_line('Fehler in doRemote_unfreezeClient: ' || sqlErrM);
+--            raise;
+    end; 
+    
+	-------------------------------------------------------------------------- 
     
     procedure doRemote_unfreezeClient(p_clientChannel varchar2, p_message VARCHAR2)
     as
@@ -2244,8 +2385,6 @@ BEGIN
         l_data   varchar2(100);
         l_msg    varchar2(500);
     begin
---        dbms_output.enable();
---        dbms_output.put_line('Anfrage nach unfreeze im Server angekommen: ' || sysTimestamp);
         l_header := '"header":{"msg_type":"SERVER_RESPONSE"}';
         l_meta   := '"meta":{"server_version":"' || LILA_VERSION || '"}';
         l_data   := '"payload":{"server_message":"' || TXT_ACK_OK || '", ' || get_serverCode(TXT_ACK_OK);
@@ -2293,6 +2432,7 @@ BEGIN
         l_response varchar2(1000);
     begin
         l_response := waitForResponse(
+            p_processId     => null,
             p_request       => 'SERVER_SHUTDOWN',
             p_payload       => p_message,
             p_timeoutSec    => 5
@@ -2302,11 +2442,12 @@ BEGIN
     end;
 
     
-    procedure SERVER_SEND_ANY_MSG(p_message varchar2)
+    procedure SERVER_SEND_ANY_MSG(p_processId number, p_message varchar2)
     as
         l_response varchar2(1000);
     begin
         l_response := waitForResponse(
+            p_processId     => p_processId,
             p_request       => 'ANY_MSG',
             p_payload       => p_message,
             p_timeoutSec    => 5
@@ -2321,8 +2462,8 @@ BEGIN
         l_payload   varchar2(1000);
         l_response  varchar2(100);        
         jasonObj    JSON_OBJECT_T := JSON_OBJECT_T();
-    begin        
-        l_response := waitForResponse('NEW_SESSION', p_payload, 5);
+    begin
+        l_response := waitForResponse(null, 'NEW_SESSION', p_payload, 5);
         
         CASE
             WHEN l_response = 'TIMEOUT' THEN
@@ -2338,12 +2479,14 @@ BEGIN
 
         -- Nur valide IDs registrieren
         IF l_ProcessId > 0 THEN
-            g_remote_sessions(l_ProcessId) := TRUE;
+            g_remote_sessions(l_ProcessId) := TRUE; -- in die Liste der RemoteSessions eintragen
+            g_routing_cache(l_ProcessId) := g_routing_cache('INITIAL_HANDSHAKE'); -- ab jetzt kommuniziert dieser Client über einen zugewiesenen Kanal
         END IF;
         RETURN l_ProcessId;
         
     EXCEPTION
         WHEN OTHERS THEN
+        raise;
         return -200;
     end;
     
@@ -2431,7 +2574,22 @@ BEGIN
         l_maxPipeSize PLS_INTEGER := 16777216; --  16777216, 67108864 
     begin
         g_serverProcessId := new_session('LILA_REMOTE_SERVER', logLevelMonitor);
+
         -- Pipe erstellen (Public oder Private, Kapazität hier 1MB für High-Load)
+        discovery_active_servers; -- markiert die bereits von anderen Servern reservierten Pipes        
+        FOR i IN 1..g_pipe_pool.COUNT LOOP
+            IF NOT g_pipe_pool(i).is_active THEN
+                g_pipeName := g_pipe_pool(i).pipe_name;
+                EXIT;
+            END IF;
+        END LOOP;
+        
+/*
+    aktuell nimmt der Server den in der Deklaration zugeteilten Default-Namen
+        IF g_pipeName IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20001, 'LILA-ERROR: Alle Server-Slots belegt.');
+        END IF;
+*/
         g_remote_sessions.DELETE;
         DBMS_PIPE.RESET_BUFFER;
         DBMS_PIPE.PURGE(g_pipeName); 
@@ -2469,6 +2627,9 @@ BEGIN
                         
                     WHEN 'UNFREEZE_REQUEST' then
                         doRemote_unfreezeClient(l_clientChannel, l_message);
+                        
+                    WHEN 'SERVER_PING' then
+                        doRemote_pingEcho(l_clientChannel, l_message);
 
                     ELSE 
                         -- Unbekanntes Tag loggen
