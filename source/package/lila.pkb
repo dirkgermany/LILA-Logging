@@ -19,7 +19,9 @@ create or replace PACKAGE BODY LILA AS
         process_is_dirty    BOOLEAN,
         last_process_flush  TIMESTAMP,
         last_sync_check     TIMESTAMP,
-        tabName_master      VARCHAR2(100)
+        tabName_master      VARCHAR2(100),
+        throttle_msg_count  PLS_INTEGER := 0,      -- NEU: Counter pro Session
+        throttle_last_check TIMESTAMP := SYSTIMESTAMP -- NEU: Zeitstempel pro Session
     );
 
     -- Table for several processes
@@ -114,7 +116,7 @@ create or replace PACKAGE BODY LILA AS
     g_alertCode_Flush CONSTANT varchar2(25) := 'LILA_ALERT_FLUSH_CFG';
     g_alertCode_Read  CONSTANT varchar2(25) := 'LILA_ALERT_READ_CFG';
     
-    g_pipeName  VARCHAR2(30) := 'LILA_REQUEST_PIPE';
+    g_pipeName  VARCHAR2(30) := NULL;
 
     -- general Flush Time-Duration
     g_flush_millis_threshold PLS_INTEGER            := 1500;  -- Max. Millisekunden bis zum Flush
@@ -124,16 +126,23 @@ create or replace PACKAGE BODY LILA AS
     g_monitor_alert_threshold_factor NUMBER         := 5.0;   -- Max. Ausreißer in der Dauer eines Verarbeitungsschrittes
   
     -- Throttling for SIGNALs
-    g_last_signal_time TIMESTAMP := SYSTIMESTAMP - INTERVAL '1' DAY;
+    C_TIMEOUT_DISC_CLI  CONSTANT NUMBER      := 1.5;   -- Client-Discovery (schnell)
+    C_TIMEOUT_DISC_SRV  CONSTANT NUMBER      := 4.0;   -- Server-Startup (sicher)
+    C_TIMEOUT_HANDSHAKE CONSTANT NUMBER      := 10.0;  -- NEW_SESSION/Sync (geduldig)
+    C_TIMEOUT_SRV_LOOP  CONSTANT NUMBER      := 1.5;   -- Server-Loop (Housekeeping-Intervall)
+    C_TIMEOUT_DRAIN     CONSTANT NUMBER      := 0.1;   -- Graceful Shutdown (Nachlaufzeit)
+
     
     TYPE code_map_t IS TABLE OF PLS_INTEGER INDEX BY VARCHAR2(30);
     g_response_codes code_map_t;
     
     g_serverProcessId PLS_INTEGER := -1;
+    g_shutdownPassword varchar2(50);
     
     g_is_high_perf    BOOLEAN := FALSE;
     g_msg_counter     PLS_INTEGER := 0;
     g_last_check_time TIMESTAMP := SYSTIMESTAMP;
+    
     ---------------------------------------------------------------
     -- Placeholders for tables
     ---------------------------------------------------------------
@@ -152,7 +161,7 @@ create or replace PACKAGE BODY LILA AS
     function extractFromJsonStr(p_json_doc varchar2, jsonPath varchar2) return varchar2;
     function extractFromJsonNum(p_json_doc varchar2, jsonPath varchar2) return number;
     procedure flushMonitor(p_processId number);
-    function pingServer(p_pipeName varchar2) return boolean;
+    function pingServer(p_pipeName varchar2, p_timeout PLS_INTEGER) return boolean;
     
     ---------------------------------------------------------------
     -- Antwort Codes stabil vereinheitlichen
@@ -162,6 +171,7 @@ create or replace PACKAGE BODY LILA AS
         IF g_response_codes.COUNT = 0 THEN
             g_response_codes(TXT_ACK_SHUTDOWN) := NUM_ACK_SHUTDOWN;
             g_response_codes(TXT_ACK_OK)       := NUM_ACK_OK;
+            g_response_codes(TXT_ACK_DECLINE)  := NUM_ACK_DECLINE;
             g_response_codes(TXT_PING_ECHO)    := NUM_PING_ECHO;
             g_response_codes(TXT_SERVER_INFO)  := NUM_SERVER_INFO;
     
@@ -228,7 +238,7 @@ create or replace PACKAGE BODY LILA AS
     --------------------------------------------------------------------------
     -- Look for free Server-Pipe 
 	--------------------------------------------------------------------------
-    function getPipeForSession(p_processId number) return varchar2 
+    function getServerPipeForSession(p_processId number) return varchar2 
     as
         l_key     varchar2(50) := nvl(to_char(p_processId), 'INITIAL_HANDSHAKE');
         l_slotIdx PLS_INTEGER := -1;
@@ -298,9 +308,7 @@ create or replace PACKAGE BODY LILA AS
         l_data  := '"payload":' || p_payLoad;
         l_msgSend := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
         
-        l_pipeName := nvl(p_pipeName, getPipeForSession(p_processId));
-    dbms_output.enable();
-    dbms_output.put_line('Pipe für processId ' || p_processId || ' = ' || l_pipeName);
+        l_pipeName := getServerPipeForSession(p_processId);
         
         DBMS_PIPE.PACK_MESSAGE(l_msgSend);
         l_status := DBMS_PIPE.SEND_MESSAGE(l_pipeName, timeout => 3);
@@ -319,7 +327,7 @@ create or replace PACKAGE BODY LILA AS
     ---------------------------------------------------------------
     -- Aktive Server markieren
     ---------------------------------------------------------------
-    function pingServer(p_pipeName varchar2) return boolean
+    function pingServer(p_pipeName varchar2, p_timeout PLS_INTEGER) return boolean
     as
         l_msg       VARCHAR2(4000);
         l_status    PLS_INTEGER;
@@ -335,13 +343,10 @@ create or replace PACKAGE BODY LILA AS
         l_meta  := '"meta":{"param":"value"}';
         l_data  := '"payload":"{}"';
         l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
-dbms_output.enable();
-dbms_output.put_line('pingServer pipeName = ' || p_pipeName );
-        
+
         DBMS_PIPE.PACK_MESSAGE(l_msg);
-        if DBMS_PIPE.SEND_MESSAGE(p_pipeName, timeout => 3) = 0 then
-dbms_output.put_line('pingServer: message gesendet');
-            l_statusReceive := DBMS_PIPE.RECEIVE_MESSAGE(l_clientChannel, timeout => 2);
+        if DBMS_PIPE.SEND_MESSAGE(p_pipeName, timeout => p_timeout) = 0 then
+            l_statusReceive := DBMS_PIPE.RECEIVE_MESSAGE(l_clientChannel, timeout => p_timeout);
             IF l_statusReceive = 0 THEN
                 DBMS_PIPE.UNPACK_MESSAGE(l_msg);
             END IF;
@@ -349,38 +354,44 @@ dbms_output.put_line('pingServer: message gesendet');
             DBMS_PIPE.PURGE(l_clientChannel);
             l_status := DBMS_PIPE.REMOVE_PIPE(l_clientChannel);
         end if;
-dbms_output.put_line('pingServer l_statusReceive: ' || l_statusReceive);       
+        
         IF l_statusReceive !=0  THEN RETURN FALSE; END IF;
         return TRUE;
     end;
 
-    PROCEDURE discovery_active_servers IS
+    PROCEDURE discovery_active_servers(p_pingTime PLS_INTEGER)
+    as
     BEGIN
         FOR i IN 1..g_pipe_pool.COUNT LOOP
             -- Sende PING an g_pipe_pool(i).pipe_name
             -- Wenn Antwort innerhalb von 100ms kommt:
-            if pingServer(g_pipe_pool(i).pipe_name) then
-dbms_output.enable();
+            if pingServer(g_pipe_pool(i).pipe_name, p_pingTime) then
                 g_pipe_pool(i).is_active := TRUE;
-dbms_output.put_line('discovery_active_servers: ' || g_pipe_pool(i).pipe_name || ' ist aktiv');
+            else
+                g_pipe_pool(i).is_active := FALSE;
             end if;
         END LOOP;
+        
+    exception
+        when others then
+            raise;
+            
     END;
 
     procedure send_sync_signal(p_processId number)
     as
         l_response varchar2(1000);
         l_timestampBefore TIMESTAMP;
-        l_diffMillis PLS_INTEGER;
+--        l_diffMillis PLS_INTEGER;
     begin
         l_timestampBefore := systimestamp;
         l_response := waitForResponse(p_processId, 'UNFREEZE_REQUEST', '{}', 10);
-        l_diffMillis := get_ms_diff(l_timestampBefore, systimestamp);
-        if (upper(l_response) = 'TIMEOUT') then
+--        l_diffMillis := get_ms_diff(l_timestampBefore, systimestamp);
+--        if (upper(l_response) = 'TIMEOUT') then
             null;
-        else
-            null;
-        end if;
+--        else
+--            null;
+--        end if;
         
     exception
         when others then
@@ -395,14 +406,14 @@ dbms_output.put_line('discovery_active_servers: ' || g_pipe_pool(i).pipe_name ||
     IS
         l_now TIMESTAMP := SYSTIMESTAMP;
         l_diff_millis PLS_INTEGER;
+        r_sess t_session_rec := g_sessionList(p_processId); 
     BEGIN
         IF NOT g_is_high_perf THEN
-            g_msg_counter := g_msg_counter + 1;
-            
-            -- Alle 10.000 Nachrichten Check durchführen
-            IF g_msg_counter >= C_THROTTLE_LIMIT then
+            r_sess.throttle_msg_count := r_sess.throttle_msg_count + 1;          
+            -- Alle n Nachrichten Check durchführen (z.B. 10000)
+            IF r_sess.throttle_msg_count >= C_THROTTLE_LIMIT then
                 -- Berechnung der Differenz in Sekunden
-                l_diff_millis := get_ms_diff(g_last_check_time, SYSTIMESTAMP);
+                l_diff_millis := get_ms_diff(r_sess.throttle_last_check, l_now);
     
                 IF l_diff_millis < C_THROTTLE_INTERVAL THEN
                     -- Stoppe die Flut, um dem Server Luft zu verschaffen
@@ -411,8 +422,8 @@ dbms_output.put_line('discovery_active_servers: ' || g_pipe_pool(i).pipe_name ||
                 END IF;
     
                 -- Reset
-                g_msg_counter := 0;
-                g_last_check_time := SYSTIMESTAMP;
+                r_sess.throttle_msg_count := 0;
+                r_sess.throttle_last_check := l_now;
             END IF;
         END IF;
     END;
@@ -443,7 +454,7 @@ dbms_output.put_line('discovery_active_servers: ' || g_pipe_pool(i).pipe_name ||
         
         l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
             
-        l_pipeName := getPipeForSession(p_processId);
+        l_pipeName := getServerPipeForSession(p_processId);
             
         DBMS_PIPE.PACK_MESSAGE(l_msg);
         l_status := DBMS_PIPE.SEND_MESSAGE(l_pipeName, timeout => p_timeoutSec);
@@ -2064,6 +2075,12 @@ BEGIN
             -- Zum nächsten Key springen
             v_key := g_monitor_shadows.NEXT(v_key);
         END LOOP;
+        
+        -- G) Die Liste der aktiven Server zurücksetzen
+        FOR i IN 1..g_pipe_pool.COUNT LOOP
+                g_pipe_pool(i).is_active := FALSE;
+        END LOOP;
+        
     
     EXCEPTION
         WHEN OTHERS THEN
@@ -2335,7 +2352,6 @@ BEGIN
         l_processInfo := extractFromJsonNum(l_payload, 'process_info');
         l_status      := extractFromJsonNum(l_payload, 'status');
         
-
         l_header := '"header":{"msg_type":"SERVER_RESPONSE"}';
         l_meta   := '"meta":{"server_version":"' || LILA_VERSION || '"}';
         l_data   := '"payload":{"server_message":"' || TXT_ACK_OK || '", ' || get_serverCode(TXT_ACK_OK);
@@ -2448,13 +2464,15 @@ BEGIN
         
         l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
 
+        discovery_active_servers(0);
+        
         -- Wir gehen physisch alle Slots durch, nicht nur den "nächsten"
         for i in 1..g_pipe_pool.count loop
             -- Optional: Nur an Server schicken, die wir als aktiv markiert haben
             -- Aber "blind" an alle ist sicherer, falls die Discovery nicht aktuell war
             l_pipeName := g_pipe_pool(i).pipe_name;
             
-            -- Direktes Versenden ohne getPipeForSession-Umweg
+            -- Direktes Versenden ohne getServerPipeForSession-Umweg
             l_response := waitForResponse(
                 p_processId     => null,
                 p_request       => 'SERVER_SHUTDOWN',
@@ -2472,16 +2490,17 @@ BEGIN
 	
     -------------------------------------------------------------------------- 
     
-    procedure SERVER_SHUTDOWN(p_pipeName varchar2, p_message varchar2)
+    procedure SERVER_SHUTDOWN(p_processId number, p_pipeName varchar2, p_password varchar2)
     as
         l_response varchar2(1000);
+        l_message  varchar2(200);
     begin
+        l_message := '{"pipe_name":"' || p_pipeName || '", "shutdown_password":"' || p_password || '"}';
         l_response := waitForResponse(
-            p_processId     => null,
+            p_processId     => p_processId,
             p_request       => 'SERVER_SHUTDOWN',
-            p_payload       => p_message,
-            p_timeoutSec    => 5,
-            p_pipeName      => p_pipeName
+            p_payload       => l_message,
+            p_timeoutSec    => 5
         );
         dbms_output.enable();
         dbms_output.put_line(l_response);
@@ -2510,8 +2529,8 @@ BEGIN
         jasonObj    JSON_OBJECT_T := JSON_OBJECT_T();
     begin
         -- zunächst mal schauen, welche Server bereitstehen
-        discovery_active_servers;
-        l_response := waitForResponse(null, 'NEW_SESSION', p_payload, 5);
+        discovery_active_servers(C_TIMEOUT_DISC_CLI);
+        l_response := waitForResponse(null, 'NEW_SESSION', p_payload, C_TIMEOUT_HANDSHAKE);
         
         CASE
             WHEN l_response = 'TIMEOUT' THEN
@@ -2590,25 +2609,102 @@ BEGIN
     
 	--------------------------------------------------------------------------
     
-    PROCEDURE handleServerShutdown(p_clientChannel varchar2, p_serverMsgNum varchar2)
+    function handleServerShutdown(p_clientChannel varchar2, p_message varchar2) return boolean
     as
         l_status    PLS_INTEGER;
+        l_password  varchar2(50);
+        l_payload varchar2(500); 
+        l_header  varchar2(200);
+        l_meta    varchar2(200);
+        l_data    varchar2(200);
+        l_msg     varchar2(2000);
     begin
-        DBMS_PIPE.PACK_MESSAGE(packServerResp(p_serverMsgNum));
-        l_status := DBMS_PIPE.SEND_MESSAGE(p_clientChannel, timeout => 2);
-        dbms_output.enable();
-        dbms_output.put_line('Shutdown Signal gesetzt, antworte an ' || p_clientChannel);
+    
+        l_payload     := JSON_QUERY(p_message, '$.payload');
+        l_password   := extractFromJsonStr(l_payload, 'shutdown_password');
+        
+        l_header := '"header":{"msg_type":"SERVER_RESPONSE"}';
+        l_meta   := '"meta":{"server_version":"' || LILA_VERSION || '"}';
+
+        if l_password = g_shutdownPassword then            
+            l_data   := '"payload":{"server_message":"' || TXT_ACK_SHUTDOWN || '", ' || get_serverCode(TXT_ACK_SHUTDOWN);
+        else
+            l_data   := '"payload":{"server_message":"' || TXT_ACK_DECLINE || '", ' || get_serverCode(TXT_ACK_DECLINE);
+        end if;
+        l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
+
+        DBMS_PIPE.RESET_BUFFER;
+        DBMS_PIPE.PACK_MESSAGE(l_msg);        
+        l_status := DBMS_PIPE.SEND_MESSAGE(p_clientChannel, timeout => 1);
         
         IF l_status = 0 THEN
             dbms_output.put_line('Antwort an Client gesendet.');
         ELSE
             dbms_output.put_line('Fehler beim Senden der Antwort: ' || l_status);
-        END IF;                    
+        END IF;
+        
+        return l_password = g_shutdownPassword;
     end;
     
 	--------------------------------------------------------------------------
 
-    PROCEDURE START_SERVER
+    FUNCTION CREATE_SERVER(p_password varchar2) RETURN VARCHAR2
+    as
+        l_slot_idx PLS_INTEGER;
+        l_job_name VARCHAR2(30);
+        l_pipe     VARCHAR2(30);
+        l_action   VARCHAR2(1000);
+    BEGIN
+        -- 1. WICHTIG: Erst schauen, was draußen wirklich los ist!
+        -- Aktualisiert g_pipe_pool(i).is_active via Ping/Antwort
+        discovery_active_servers(C_TIMEOUT_DISC_SRV); 
+    
+        -- 2. Jetzt erst den ersten tatsächlich freien Slot suchen
+        FOR i IN 1..g_pipe_pool.COUNT LOOP
+            IF NOT g_pipe_pool(i).is_active THEN
+                l_slot_idx := i;
+                l_pipe     := g_pipe_pool(i).pipe_name;
+                EXIT;
+            END IF;
+        END LOOP;
+    
+        IF l_slot_idx IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20005, 'LILA: Kein freier Slot für weiteren Server gefunden.');
+        END IF;
+        l_job_name := 'LILA_SRV_SLOT_' || l_slot_idx;
+        
+            -- 2. Sicherstellen, dass kein "Leichen"-Job existiert
+        BEGIN
+            DBMS_SCHEDULER.DROP_JOB(l_job_name, force => TRUE);
+        EXCEPTION WHEN OTHERS THEN NULL; END;
+    
+        l_action := q'[BEGIN LILA.START_SERVER(p_pipeName => ']' 
+                    || l_pipe 
+                    || q'[', p_password => ']' 
+                    || p_password 
+                    || q'['); END;]';     
+
+        -- 3. Den Hintergrund-Prozess "zünden"
+        DBMS_SCHEDULER.CREATE_JOB (
+            job_name   => l_job_name,
+            job_type   => 'PLSQL_BLOCK',
+            -- Hier übergeben wir den Slot-Namen als Parameter an deine START_SERVER Prozedur
+            job_action => l_action,
+            enabled    => TRUE,
+            auto_drop  => TRUE,
+            comments   => 'LILA Background Worker für Pipe ' || l_pipe
+        );
+        
+        -- 4. Markiere Slot lokal als "im Startvorgang" (Optional)
+        g_pipe_pool(l_slot_idx).is_active := TRUE; 
+    
+        RETURN 'LILA-Server Pipe = ' || l_pipe;
+    
+    END;
+    
+	--------------------------------------------------------------------------
+
+    procedure START_SERVER(p_pipeName varchar2, p_password varchar2)
     as
         v_key VARCHAR2(100); 
         l_clientChannel  varchar2(30);
@@ -2621,28 +2717,16 @@ BEGIN
         l_shutdownSignal BOOLEAN := FALSE;
         l_stop_server_exception EXCEPTION;
         l_maxPipeSize PLS_INTEGER := 16777216; --  16777216, 67108864 
+        l_lastHeartbeat TIMESTAMP := sysTimestamp;
+        l_heartbeatInterval constant PLS_INTEGER := 60000;
     begin
+        g_shutdownPassword := p_password;
+        g_pipeName := p_pipeName;
         g_serverProcessId := new_session('LILA_REMOTE_SERVER', logLevelMonitor);
-
-        -- Pipe erstellen (Public oder Private, Kapazität hier 1MB für High-Load)
-        discovery_active_servers; -- markiert die bereits von anderen Servern reservierten Pipes        
-        FOR i IN 1..g_pipe_pool.COUNT LOOP
-            IF NOT g_pipe_pool(i).is_active THEN
-                g_pipeName := g_pipe_pool(i).pipe_name;
-                g_pipe_pool(i).is_active := TRUE;
-                EXIT;
-            END IF;
-        END LOOP;
-
-        IF g_pipeName IS NULL THEN
-            RAISE_APPLICATION_ERROR(-20001, 'LILA-ERROR: Alle Server-Slots belegt.');
-        END IF;
-        dbms_output.enable();
-        dbms_output.put_line('LILA-Server Name: ' || g_pipeName);
 
         g_remote_sessions.DELETE;
         DBMS_PIPE.RESET_BUFFER;
-        DBMS_PIPE.PURGE(g_pipeName); 
+        DBMS_PIPE.PURGE(g_pipeName);
         l_dummyRes := DBMS_PIPE.REMOVE_PIPE(g_pipeName);
         l_dummyRes := DBMS_PIPE.CREATE_PIPE(pipename => g_pipeName, maxpipesize => l_maxPipeSize, private => false);
         
@@ -2657,8 +2741,10 @@ BEGIN
                                 
                 CASE l_request
                     WHEN 'SERVER_SHUTDOWN' then
-                        handleServerShutdown(l_clientChannel, TXT_ACK_SHUTDOWN); 
-                        l_shutdownSignal := TRUE;
+                        if handleServerShutdown(l_clientChannel, l_message) then 
+                            -- nur wenn gültiges Passwort geschickt wurde
+                            l_shutdownSignal := TRUE;
+                        end if;
 
                     WHEN 'ANY_MSG' then
                         null;
@@ -2700,9 +2786,14 @@ BEGIN
             
             ELSIF l_status = 1 THEN
                 -- Timeout erreicht. Passiert, wenn 10 Sekunden kein Signal kam.
-                -- Housekeeping
-                MARK_STEP(g_serverProcessId, 'housekeeping');
-                SYNC_ALL_DIRTY;
+                 if get_ms_diff(l_lastHeartbeat, sysTimestamp) >= l_heartbeatInterval then
+                    -- Housekeeping
+                   SYNC_ALL_DIRTY;
+                    -- Ein Lebenszeichen abgeben
+                    MARK_STEP(g_serverProcessId, 'housekeeping');
+                    l_lastHeartbeat := sysTimestamp;
+                end if;
+
             end if;
             
             EXIT when l_shutdownSignal;
