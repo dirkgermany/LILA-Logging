@@ -11,10 +11,10 @@ exec lila.SERVER_SEND_EXIT('{"msg":"okay"}');
 
 DECLARE
     v_sessionRemote1_id VARCHAR2(100);
-    v_sessionRemote1_id VARCHAR2(100);
-    v_sessionRemote1_id VARCHAR2(100);
-    v_sessionRemote1_id VARCHAR2(100);
+    v_sessionRemote2_id VARCHAR2(100);
+    v_sessionRemote3_id VARCHAR2(100);
     v_sessionLokal_id   VARCHAR2(100);
+    v_remoteCloser_id   VARCHAR2(100);
     v_shutdownResponse  VARCHAR2(500);
 BEGIN
 
@@ -28,6 +28,8 @@ BEGIN
     dbms_output.put_line('Session remote: ' || v_sessionRemote1_id);
     v_sessionRemote2_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
     dbms_output.put_line('Session remote: ' || v_sessionRemote2_id);
+    v_sessionRemote3_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
+    dbms_output.put_line('Session remote: ' || v_sessionRemote3_id);
     
     -- New local session
     v_sessionLokal_id := lila.new_session('Local Session', 8, 'local_log');
@@ -48,15 +50,15 @@ BEGIN
     dbms_output.put_line('Close: ' || v_shutdownResponse);
 
     -- Session dedicated to server shutdown
-    v_sessionRemoteCloser_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
+    v_remoteCloser_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
     dbms_output.put_line('Session remote for later server shutdown: ' || v_sessionRemoteCloser_id);  
-    lila.server_shutdown(v_sessionRemoteCloser_id);
+    lila.server_shutdown(v_remoteCloser_id);
     dbms_output.put_line('Any server closed');
         
     -- Shutdown another server
-    v_sessionRemoteCloser_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
+    v_remoteCloser_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
     dbms_output.put_line('Session remote: ' || v_sessionRemoteCloser_id);    
-    lila.server_shutdown(v_sessionRemoteCloser_id);
+    lila.server_shutdown(v_remoteCloser_id);
     dbms_output.put_line('Another server closed');
 
 END;
