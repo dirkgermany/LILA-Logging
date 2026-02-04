@@ -10,32 +10,54 @@ exec lila.SERVER_SEND_EXIT('{"msg":"okay"}');
 
 
 DECLARE
-    -- Falls die Funktion einen Wert zurückgibt, hier Variable deklarieren
-    v_sessionRemote_id VARCHAR2(100);
-    v_sessionLokal_id VARCHAR2(100);
+    v_sessionRemote1_id VARCHAR2(100);
+    v_sessionRemote1_id VARCHAR2(100);
+    v_sessionRemote1_id VARCHAR2(100);
+    v_sessionRemote1_id VARCHAR2(100);
+    v_sessionLokal_id   VARCHAR2(100);
+    v_shutdownResponse  VARCHAR2(500);
 BEGIN
-    -- 1. Erstes Statement
 
-    -- 2. Aufruf der Funktion und Zuweisung (:= statt =)
-    dbms_output.put_line('Öffne eine remote session...');
-    v_sessionRemote_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
-    dbms_output.put_line('Session remote: ' || v_sessionRemote_id);
+    -- Start remote LILA server
+    lila.start_server('LILA_P1', 'geheim');
+    lila.start_server('LILA_P2', 'geheim');
+    dbms_session.sleep(5);
 
-    dbms_output.put_line('Öffne eine lokale session...');
+    -- New remote sessions
+    v_sessionRemote1_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
+    dbms_output.put_line('Session remote: ' || v_sessionRemote1_id);
+    v_sessionRemote2_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
+    dbms_output.put_line('Session remote: ' || v_sessionRemote2_id);
+    
+    -- New local session
     v_sessionLokal_id := lila.new_session('Local Session', 8, 'local_log');
     dbms_output.put_line('Session lokal: ' || v_sessionLokal_id);
    
+    -- Bulk send
     for i in 1..1000 loop
-        lila.info(v_sessionLokal_id, 'Eine lokale Information');
-        lila.info(v_sessionRemote_id, 'Eine remote Information');
+        lila.info(v_sessionLokal_id, 'Nachricht vom lokalen Client');
+        lila.info(v_sessionRemote1_id, 'Nachricht von Client 1');
+        lila.info(v_sessionRemote2_id, 'Nachricht von Client 2');
     end loop;
    
-    lila.close_session(v_sessionRemote_id);
-    lila.close_session(v_sessionLokal_id);
+    v_shutdownResponse := lila.close_session(v_sessionRemote1_id);
+    dbms_output.put_line('Close: ' || v_shutdownResponse);
+    v_shutdownResponse := lila.close_session(v_sessionRemote2_id);
+    dbms_output.put_line('Close: ' || v_shutdownResponse);
+    v_shutdownResponse := lila.close_session(v_sessionLokal_id);
+    dbms_output.put_line('Close: ' || v_shutdownResponse);
+
+    -- Session dedicated to server shutdown
+    v_sessionRemoteCloser_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
+    dbms_output.put_line('Session remote for later server shutdown: ' || v_sessionRemoteCloser_id);  
+    lila.server_shutdown(v_sessionRemoteCloser_id);
+    dbms_output.put_line('Any server closed');
+        
+    -- Shutdown another server
+    v_sessionRemoteCloser_id := lila.server_new_session('{"process_name":"Remote Session","log_level":8,"steps_todo":3,"days_to_keep":3,"tabname_master":"remote_log"}');
+    dbms_output.put_line('Session remote: ' || v_sessionRemoteCloser_id);    
+    lila.server_shutdown(v_sessionRemoteCloser_id);
+    dbms_output.put_line('Another server closed');
 
 END;
 /
-
-select 'local' modus, count(*) from local_log_detail
-union
-select 'remote' modus, count(*) from remote_log_detail;
