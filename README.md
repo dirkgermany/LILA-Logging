@@ -96,11 +96,12 @@ LILA's decoupled architecture is designed for seamless integration with modern m
 
 ### High-Efficiency Monitoring
 
-#### Real-Time Performance Metrics
+#### Real-Time and Granular Action Tracking
 LILA is more than just a logging tool. Using the `MARK_STEP` functionality, named actions can be monitored independently. The framework automatically tracks metrics **per action**:
-*   **Step Duration:** Precise execution time for a specific action's segment.
-*   **Average Duration:** Historical benchmarks to detect performance degradation per action.
-*   **Step Counter:** Monitoring progress and iterations within a specific named workflow.
+* **Independent Statistics:** Monitor multiple activities (e.g., XML_PARSING, FILE_UPLOAD) simultaneously.
+* **Step Duration:** Precise execution time for a specific action's segment.
+* **Average Duration:** Historical benchmarks to detect performance degradation per action.
+* **Zero Client Overhead:** All statistical calculations and threshold checks are offloaded to the LILA-Server.
 
 #### Intelligent Metric Calculation
 Instead of performing expensive aggregations across millions of log records for every query, LILA uses an intelligent calculation mechanism. Metrics are updated incrementally, ensuring that monitoring dashboards (e.g., in Grafana, APEX, or Oracle Jet) remain highly responsive even with massive datasets.
@@ -108,7 +109,7 @@ Instead of performing expensive aggregations across millions of log records for 
 ### Core Strengths
 
 #### Scalability & Cloud Readiness
-By avoiding file system dependencies (`UTL_FILE`) and focusing on native database features, LILA is 100% compatible with **Oracle Autonomous Database** and optimized for scalable cloud infrastructures in 2026.
+By avoiding file system dependencies (`UTL_FILE`) and focusing on native database features, LILA is 100% compatible with **Oracle Autonomous Database** and optimized for scalable cloud infrastructures.
 
 #### Developer Experience (DX)
 LILA promotes a standardized error-handling and monitoring culture within development teams. Its easy-to-use API allows for a "zero-config" start, enabling developers to implement professional observability in just a few minutes. No complex DBA grants or extensive infrastructure preparations are required—just deploy the package and start logging immediately.
@@ -128,7 +129,6 @@ LILA persists different information about your processes.
 For simplicity, all logs are stored in two tables.
 
 1. The master table contains data about the process itself (the live-dashboard). Always exactly one record per process. This table frees you from complex queries such as “group by,” “max(timestamp),” etc., which you would otherwise have to run on thousands or millions of rows to see the current status of your process.
-
 2. The table with typical detailed log information (the process-history). This second table enables rapid monitoring because the constantly growing number of entries has no impact on the master table.
 
 ***Process information***
