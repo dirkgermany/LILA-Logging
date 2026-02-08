@@ -1,0 +1,3 @@
+## Performance
+* dynamische create index sind noch fehlerhaft und werden nicht auf alle Tabellen angewandt
+* Indexes grundsätzlich prüfen
