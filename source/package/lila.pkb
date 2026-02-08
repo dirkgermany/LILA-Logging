@@ -2609,16 +2609,13 @@ dbms_output.put_line('+++++++++++++++++++++++++++++++++++++++ ' || l_processInfo
         
         --------------------------------------------------------------------------
         
-        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_monStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2
+        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2
         as
             l_payload    varchar2(1000);
         begin
-            
-            l_payload := '{"process_name":"' || p_processName || '", "log_level":' || p_logLevel || ', "steps_todo":' || 
-                            p_monStepsToDo || ', "days_to_keep":' || p_daysToKeep || ', "tabname_master":"' || p_tabNameMaster || '"}';
-                            
+            l_payload := '{"process_name":"' || p_processName || '", "log_level":' || p_logLevel || ', "proc_steps_todo":' || 
+                            p_procStepsToDo || ', "days_to_keep":' || p_daysToKeep || ', "tabname_master":"' || p_tabNameMaster || '"}';                            
             return server_new_session(l_payload);
-        
         end;
         
         FUNCTION SERVER_NEW_SESSION(p_payload varchar2) RETURN NUMBER
