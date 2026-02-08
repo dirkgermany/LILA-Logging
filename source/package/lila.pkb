@@ -9,8 +9,8 @@
             process_id          NUMBER(19,0),
             serial_no           PLS_INTEGER := 0,
             log_level           PLS_INTEGER := 0,
-            steps_todo          PLS_INTEGER := 0,
-            steps_done          PLS_INTEGER := 0,
+--            steps_todo          PLS_INTEGER := 0,
+--            steps_done          PLS_INTEGER := 0,
             monitoring          PLS_INTEGER := 0,
             last_monitor_flush  TIMESTAMP, -- Zeitpunkt des letzten Monitor-Flushes
             last_log_flush      TIMESTAMP, -- Zeitpunkt des letzten Log-Flushes
@@ -57,7 +57,7 @@
             avg_action_time NUMBER,        -- Umbenannt
             action_time     TIMESTAMP,     -- Startzeitpunkt der Aktion
             used_time       NUMBER,        -- Dauer der letzten Ausführung (in Sek.)
-            steps_done     PLS_INTEGER := 0 -- Hilfsvariable für Durchschnittsberechnung
+            mon_steps_done     PLS_INTEGER := 0 -- Hilfsvariable für Durchschnittsberechnung
         );
         TYPE t_monitor_history_tab IS TABLE OF t_monitor_buffer_rec;    
         TYPE t_monitor_map IS TABLE OF t_monitor_history_tab INDEX BY VARCHAR2(100);
@@ -531,8 +531,8 @@
                     process_start timestamp(6),
                     process_end timestamp(6),
                     last_update timestamp(6),
-                    steps_todo number,
-                    steps_done number,
+                    proc_steps_todo number,
+                    proc_steps_done number,
                     status number(2,0),
                     info varchar2(2000),
                     tabNameMaster varchar2(100)
@@ -700,8 +700,8 @@
                 process_start,
                 process_end,
                 last_update,
-                steps_todo,
-                steps_done,
+                proc_steps_todo,
+                proc_steps_done,
                 status,
                 info,
                 tabNameMaster
@@ -878,7 +878,7 @@
             p_processId    number,
             p_target_table varchar2,
             p_actions      sys.odcivarchar2list,
-            p_steps_done   sys.odcinumberlist,
+            p_mon_steps_done   sys.odcinumberlist,
             p_used         sys.odcinumberlist,
             p_avgs         sys.odcinumberlist,
             p_times        sys.odcidatelist
@@ -898,7 +898,7 @@
                     'insert into ' || v_safe_table || ' 
                     (PROCESS_ID, MON_ACTION, MON_STEPS_DONE, MON_USED_MILLIS, MON_AVG_MILLIS, SESSION_TIME, MONITORING, SESSION_USER, HOST_NAME)
                     values (:1, :2, :3, :4, :5, :6, 1, :7, :8)'
-                    using p_processId, p_actions(i), p_steps_done(i), p_used(i), p_avgs(i), p_times(i),
+                    using p_processId, p_actions(i), p_mon_steps_done(i), p_used(i), p_avgs(i), p_times(i),
                           v_user, v_host;
                 
                 commit;
@@ -993,7 +993,7 @@
             v_keep_rec    t_monitor_buffer_rec;
         
             v_actions     sys.odcivarchar2list := sys.odcivarchar2list();
-            v_steps_done  sys.odcinumberlist   := sys.odcinumberlist();
+            v_mon_steps_done  sys.odcinumberlist   := sys.odcinumberlist();
             v_used        sys.odcinumberlist   := sys.odcinumberlist();
             v_avgs        sys.odcinumberlist   := sys.odcinumberlist();
             v_times       sys.odcidatelist     := sys.odcidatelist();
@@ -1008,7 +1008,7 @@
                     -- 1. Alles einsammeln, was aktuell im Eimer ist
                         for i in 1 .. g_monitor_groups(v_group_key).COUNT loop
                             v_actions.extend;    v_actions(v_actions.last)    := g_monitor_groups(v_group_key)(i).action_name;
-                            v_steps_done.extend; v_steps_done(v_steps_done.last) := g_monitor_groups(v_group_key)(i).steps_done;
+                            v_mon_steps_done.extend; v_mon_steps_done(v_mon_steps_done.last) := g_monitor_groups(v_group_key)(i).mon_steps_done;
                             v_used.extend;       v_used(v_used.last)          := g_monitor_groups(v_group_key)(i).used_time;
                             v_avgs.extend;       v_avgs(v_avgs.last)          := g_monitor_groups(v_group_key)(i).avg_action_time;
                             v_times.extend;      v_times(v_times.last)         := cast(g_monitor_groups(v_group_key)(i).action_time as date);
@@ -1027,7 +1027,7 @@
                     p_processId    => p_processId,
                     p_target_table => v_targetTable,
                     p_actions      => v_actions,
-                    p_steps_done   => v_steps_done,
+                    p_mon_steps_done   => v_mon_steps_done,
                     p_used         => v_used,
                     p_avgs         => v_avgs,
                     p_times        => v_times
@@ -1149,7 +1149,7 @@
         as
             l_threshold_duration NUMBER;
         begin
-            if p_monitor_rec.steps_done > 5 THEN 
+            if p_monitor_rec.mon_steps_done > 5 THEN 
                 
                 l_threshold_duration := p_monitor_rec.avg_action_time * C_MONITOR_ALERT_THRESHOLD_FACTOR;
             
@@ -1158,7 +1158,7 @@
                     raise_alert(
                         p_processId => p_processId,
                         p_action    => p_monitor_rec.action_name,
-                        p_step      => p_monitor_rec.steps_done,
+                        p_step      => p_monitor_rec.mon_steps_done,
                         p_used_time => p_monitor_rec.used_time,
                         p_expected  => p_monitor_rec.avg_action_time
                     );
@@ -1235,16 +1235,16 @@
             -- Die nächsten Werte abhängig davon ob es einen Vorgänger gibt
             if g_monitor_shadows.EXISTS(v_key) then            -- Es gibt einen Vorgänger
                 l_prev := g_monitor_shadows(v_key);
-                g_monitor_groups(v_key)(l_new_idx).steps_done      := l_prev.steps_done + 1;
+                g_monitor_groups(v_key)(l_new_idx).mon_steps_done      := l_prev.mon_steps_done + 1;
                 g_monitor_groups(v_key)(l_new_idx).used_time       := get_ms_diff(l_prev.action_time, v_now);
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := calculate_avg(
                                                                         l_prev.avg_action_time, 
-                                                                        g_monitor_groups(v_key)(l_new_idx).steps_done, 
+                                                                        g_monitor_groups(v_key)(l_new_idx).mon_steps_done, 
                                                                         g_monitor_groups(v_key)(l_new_idx).used_time
                                                                       );
             ELSE
                 -- Erster Eintrag der Session/Action
-                g_monitor_groups(v_key)(l_new_idx).steps_done      := 1;
+                g_monitor_groups(v_key)(l_new_idx).mon_steps_done      := 1;
                 g_monitor_groups(v_key)(l_new_idx).used_time       := 0; -- Erster Marker hat keine Dauer
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := 0;
             end if ;
@@ -1356,7 +1356,7 @@
             v_rec t_monitor_buffer_rec;
         begin
             v_rec := getLastMonitorEntry(p_processId, p_actionName);
-            RETURN nvl(v_rec.steps_done, 0);
+            RETURN nvl(v_rec.mon_steps_done, 0);
         end;
         
         --------------------------------------------------------------------------
@@ -1446,8 +1446,8 @@
             set status = :PH_STATUS,
                 last_update = current_timestamp,
                 process_end = :PH_PROCESS_END,
-                steps_todo  = :PH_STEPS_TODO,
-                steps_done  = :PH_STEPS_DONE,
+                proc_steps_todo  = :PH_PROC_STEPS_TODO,
+                proc_steps_done  = :PH_PROC_STEPS_DONE,
                 info        = :PH_INFO
             where id = :PH_PROCESS_ID';  
     
@@ -1455,8 +1455,8 @@
             execute immediate sqlStatement
             USING   p_process_rec.status, 
                     p_process_rec.process_end,
-                    p_process_rec.steps_todo,
-                    p_process_rec.steps_done,
+                    p_process_rec.proc_steps_todo,
+                    p_process_rec.proc_steps_done,
                     p_process_rec.info,
                     p_process_rec.id;
             
@@ -1473,7 +1473,7 @@
         -------------------------------------------------------------------
         -- Ends an earlier started logging session by the process ID.
         -- Important! Ignores if the process doesn't exist! No exception is thrown!
-        procedure persist_close_session(p_processId number, p_tableName varchar2, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
+        procedure persist_close_session(p_processId number, p_tableName varchar2, p_procStepsToDo number, p_procStepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
         as
             pragma autonomous_transaction;
             sqlStatement varchar2(1000);
@@ -1485,11 +1485,11 @@
             set process_end = current_timestamp,
                 last_update = current_timestamp';
     
-            if p_stepsDone is not null then
-                sqlStatement := sqlStatement || ', steps_done = :PH_STEPS_DONE';
+            if p_procStepsDone is not null then
+                sqlStatement := sqlStatement || ', proc_steps_done = :PH_PROC_STEPS_DONE';
             end if ;
-            if p_stepsToDo is not null then
-                sqlStatement := sqlStatement || ', steps_todo = :PH_STEPS_TO_DO';
+            if p_procStepsToDo is not null then
+                sqlStatement := sqlStatement || ', proc_steps_todo = :PH_STEPS_TO_DO';
             end if ;
             if p_processInfo is not null then
                 sqlStatement := sqlStatement || ', info = :PH_PROCESS_INFO';
@@ -1506,11 +1506,11 @@
             DBMS_SQL.PARSE(sqlCursor, sqlStatement, DBMS_SQL.NATIVE);
             DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_PROCESS_ID', p_processId);
     
-            if p_stepsDone is not null then
-                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STEPS_DONE', p_stepsDone);
+            if p_procStepsDone is not null then
+                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_PROC_STEPS_DONE', p_procStepsDone);
             end if ;
-            if p_stepsToDo is not null then
-                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STEPS_TO_DO', p_stepsToDo);
+            if p_procStepsToDo is not null then
+                DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_STEPS_TO_DO', p_procStepsToDo);
             end if ;
             if p_processInfo is not null then
                 DBMS_SQL.BIND_VARIABLE(sqlCursor, ':PH_PROCESS_INFO', p_processInfo);
@@ -1538,7 +1538,7 @@
     
         --------------------------------------------------------------------------
     
-        procedure persist_new_session(p_processId NUMBER, p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2)
+        procedure persist_new_session(p_processId NUMBER, p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2)
         as
             pragma autonomous_transaction;
             sqlStatement varchar2(2000);
@@ -1550,11 +1550,12 @@
                 process_start,
                 last_update,
                 process_end,
-                steps_todo,
-                steps_done,
+                proc_steps_todo,
+                proc_steps_done,
                 status,
                 log_level,
-                info
+                info,
+                tabNameMaster
             )
             values (
                 :PH_PROCESS_ID, 
@@ -1566,10 +1567,11 @@
                 null,
                 null,
                 :PH_LOG_LEVEL,
-                ''START''
+                ''START'',
+                :PH_TABNAME_MASTER
             )';
             sqlStatement := replaceNameMasterTable(sqlStatement, PARAM_MASTER_TABLE, p_TabNameMaster);
-            execute immediate sqlStatement using p_processId, p_processName, p_stepsToDo, p_logLevel;     
+            execute immediate sqlStatement USING p_processId, p_processName, p_procStepsToDo, p_logLevel, upper(p_tabNameMaster);     
             commit;
         exception
             when others then
@@ -1686,7 +1688,7 @@
     
         --------------------------------------------------------------------------
         
-        procedure close_sessionRemote(p_processId number, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
+        procedure close_sessionRemote(p_processId number, p_procStepsToDo number, p_procStepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
         as
             l_payload varchar2(32767); -- Puffer für den JSON-String
             l_serverMsg varchar2(100);
@@ -1695,8 +1697,8 @@
             -- Erzeugung des JSON-Objekts
             select json_object(
                 'process_id'   value p_processId,
-                'steps_todo'   value p_stepsToDo,
-                'steps_done'   value p_stepsDone,
+                'proc_steps_todo'   value p_procStepsToDo,
+                'proc_steps_done'   value p_procStepsDone,
                 'process_info' value p_processInfo,
                 'status'       value p_status
                 returning varchar2
@@ -1721,7 +1723,7 @@
         
         --------------------------------------------------------------------------
 
-        procedure stepDoneRemote(p_processId number)
+        procedure procStepDoneRemote(p_processId number)
         as
             l_payload varchar2(32767); -- Puffer für den JSON-String
             l_serverMsg varchar2(100);
@@ -1732,11 +1734,11 @@
                 returning varchar2
             )
             into l_payload from dual;
-            sendNoWait(p_processId, 'STEP_DONE', l_payload, 0.5);
+            sendNoWait(p_processId, 'PROC_STEP_DONE', l_payload, 0.5);
         end;
         --------------------------------------------------------------------------
 
-        procedure setAnyStatusRemote(p_processId number, p_status pls_integer, p_processInfo varchar2, p_stepsToDo pls_integer, p_stepsDone pls_integer)
+        procedure setAnyStatusRemote(p_processId number, p_status pls_integer, p_processInfo varchar2, p_procStepsToDo pls_integer, p_procStepsDone pls_integer)
         as
             l_payload varchar2(32767); -- Puffer für den JSON-String
             l_serverMsg varchar2(100);
@@ -1744,8 +1746,8 @@
             -- Erzeugung des JSON-Objekts
             select json_object(
                 'process_id'   value p_processId,
-                'steps_todo'   value p_stepsToDo,
-                'steps_done'   value p_stepsDone,
+                'proc_steps_todo'   value p_procStepsToDo,
+                'proc_steps_done'   value p_procStepsDone,
                 'process_info' value p_processInfo,
                 'status'       value p_status
                 returning varchar2
@@ -1903,21 +1905,24 @@
          
         --------------------------------------------------------------------------
         
-        procedure setAnyStatus(p_processId number, p_status PLS_INTEGER, p_processInfo varchar2, p_stepsToDo number, p_stepsDone number)
+        procedure setAnyStatus(p_processId number, p_status PLS_INTEGER, p_processInfo varchar2, p_procStepsToDo number, p_procStepsDone number)
         as
         begin
         
             if is_remote(p_processId) then
-                setAnyStatusRemote(p_processId, p_status, p_processInfo, p_stepsToDo, p_stepsDone);
+dbms_output.enable();
+dbms_output.put_line('setAnyStatus is_remote: ' || p_processInfo);
+                setAnyStatusRemote(p_processId, p_status, p_processInfo, p_procStepsToDo, p_procStepsDone);
                 return;
             end if ;
             
-
+dbms_output.enable();
+dbms_output.put_line('setAnyStaut not_remote: ' || p_processInfo);
            if v_indexSession.EXISTS(p_processId) then
                 if p_status      is not null then g_process_cache(p_processId).status := p_status;        end if ;
                 if p_processInfo is not null then g_process_cache(p_processId).info := p_processInfo;     end if ;
-                if p_stepsToDo   is not null then g_process_cache(p_processId).steps_toDo := p_stepsToDo; end if ;
-                if p_stepsDone   is not null then g_process_cache(p_processId).steps_done := p_stepsDone; end if ;
+                if p_procStepsToDo   is not null then g_process_cache(p_processId).proc_steps_todo := p_procStepsToDo; end if ;
+                if p_procStepsDone   is not null then g_process_cache(p_processId).proc_steps_done := p_procStepsDone; end if ;
     
                 g_sessionList(v_indexSession(p_processId)).process_is_dirty := TRUE;
                 g_dirty_queue(p_processId) := TRUE; -- Damit SYNC_ALL_DIRTY die Session sieht
@@ -1951,35 +1956,35 @@
     
         --------------------------------------------------------------------------
         
-         procedure SET_STEPS_TODO(p_processId number, p_stepsToDo number)
+         procedure SET_PROC_STEPS_TODO(p_processId number, p_procStepsToDo number)
          as
          begin
-            setAnyStatus(p_processId, null, null, p_stepsToDo, null);
+            setAnyStatus(p_processId, null, null, p_procStepsToDo, null);
          end;
        
         --------------------------------------------------------------------------
      
-        procedure SET_STEPS_DONE(p_processId number, p_stepsDone number)
+        procedure SET_proc_steps_done(p_processId number, p_procStepsDone number)
         as
         begin
-            setAnyStatus(p_processId, null, null, null, p_stepsDone);   
+            setAnyStatus(p_processId, null, null, null, p_procStepsDone);   
         end;
         
         --------------------------------------------------------------------------
         
-        procedure STEP_DONE(p_processId number)
+        procedure PROC_STEP_DONE(p_processId number)
         as
             sqlStatement varchar2(500);
             l_steps number;
         begin
             if is_remote(p_processId) then
-                stepDoneRemote(p_processId);
+                procStepDoneRemote(p_processId);
                 return;
             end if ;
 
            if v_indexSession.EXISTS(p_processId) then
-dbms_output.put_line('STEP_DONE steps_done: ' ||  g_sessionList(v_indexSession(p_processId)).steps_done);
-                l_steps := nvl(g_process_cache(p_processId).steps_done, 0) +1;                
+dbms_output.put_line('STEP_DONE proc_steps_done: ' ||  g_process_cache(p_processId).proc_steps_done);
+                l_steps := nvl(g_process_cache(p_processId).proc_steps_done, 0) +1;                
                 setAnyStatus(p_processId, null, null, null, l_steps);   
             end if;
         end;
@@ -1995,22 +2000,22 @@ dbms_output.put_line('STEP_DONE steps_done: ' ||  g_sessionList(v_indexSession(p
             end if ;
         end;
     
-        FUNCTION GET_STEPS_DONE(p_processId NUMBER) return PLS_INTEGER
+        FUNCTION GET_PROC_STEPS_DONE(p_processId NUMBER) return PLS_INTEGER
         as
         begin
             if v_indexSession.EXISTS(p_processId) then
-                return g_process_cache(p_processId).steps_done;
+                return g_process_cache(p_processId).proc_steps_done;
             else return 0;
             end if ;
         end;
     
         --------------------------------------------------------------------------
     
-        FUNCTION GET_STEPS_TODO(p_processId NUMBER) return PLS_INTEGER
+        FUNCTION GET_PROC_STEPS_TODO(p_processId NUMBER) return PLS_INTEGER
         as
         begin
             if v_indexSession.EXISTS(p_processId) then
-                return g_process_cache(p_processId).steps_todo;
+                return g_process_cache(p_processId).proc_steps_todo;
             else return 0;
             end if ;
         end;
@@ -2152,8 +2157,8 @@ dbms_output.put_line('STEP_DONE steps_done: ' ||  g_sessionList(v_indexSession(p
         begin
             close_session(
                 p_processId   => p_processId, 
-                p_stepsToDo   => null, 
-                p_stepsDone   => null, 
+                p_procStepsToDo   => null, 
+                p_procStepsDone   => null, 
                 p_processInfo => p_processInfo, 
                 p_status      => p_status
             );
@@ -2161,13 +2166,13 @@ dbms_output.put_line('STEP_DONE steps_done: ' ||  g_sessionList(v_indexSession(p
         
         --------------------------------------------------------------------------
     
-        PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_stepsDone NUMBER, p_processInfo VARCHAR2, p_status PLS_INTEGER)
+        PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_procStepsDone NUMBER, p_processInfo VARCHAR2, p_status PLS_INTEGER)
         as
         begin
             close_session(
                 p_processId   => p_processId, 
-                p_stepsToDo   => null, 
-                p_stepsDone   => p_stepsDone, 
+                p_procStepsToDo   => null, 
+                p_procStepsDone   => p_procStepsDone, 
                 p_processInfo => p_processInfo, 
                 p_status      => p_status
             );
@@ -2182,8 +2187,8 @@ dbms_output.put_line('STEP_DONE steps_done: ' ||  g_sessionList(v_indexSession(p
         begin
             close_session(
                 p_processId   => p_processId, 
-                p_stepsToDo   => null, 
-                p_stepsDone   => null, 
+                p_procStepsToDo   => null, 
+                p_procStepsDone   => null, 
                 p_processInfo => null, 
                 p_status      => null
             );
@@ -2191,13 +2196,13 @@ dbms_output.put_line('STEP_DONE steps_done: ' ||  g_sessionList(v_indexSession(p
     
         --------------------------------------------------------------------------
     
-        procedure CLOSE_SESSION(p_processId number, p_stepsToDo number, p_stepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
+        procedure CLOSE_SESSION(p_processId number, p_procStepsToDo number, p_procStepsDone number, p_processInfo varchar2, p_status PLS_INTEGER)
         as
             v_idx PLS_INTEGER;
         begin
 info(p_processId, 'persist_close_session');
             if is_remote(p_processId) then
-                close_sessionRemote(p_processId, p_stepsToDo, p_stepsDone, p_processInfo, p_status);
+                close_sessionRemote(p_processId, p_procStepsToDo, p_procStepsDone, p_processInfo, p_status);
                 g_remote_sessions.delete(p_processId);
                 return;
             end if ;
@@ -2209,8 +2214,8 @@ info(p_processId, 'persist_close_session');
     
     --            if  logLevelSilent <= g_sessionList(v_indexSession(p_processId)).log_level then
                     v_idx := v_indexSession(p_processId);
-                    g_sessionList(v_idx).steps_done := p_stepsDone;        
-                    persist_close_session(p_processId,  g_sessionList(v_idx).tabName_master, p_stepsToDo, p_stepsDone, p_processInfo, p_status);
+--                    g_sessionList(v_idx).mon_steps_done := p_procStepsDone;        
+                    persist_close_session(p_processId,  g_sessionList(v_idx).tabName_master, p_procStepsToDo, p_procStepsDone, p_processInfo, p_status);
             checkLogsBuffer(p_processId, 'vor clearAllSessionData');
                     clearAllSessionData(p_processId);
             checkLogsBuffer(p_processId, 'nach clearAllSessionData');
@@ -2249,8 +2254,8 @@ info(p_processId, 'persist_close_session');
             v_new_rec.process_start   := current_timestamp;
             v_new_rec.process_end     := null;
             v_new_rec.last_update     := null;
-            v_new_rec.steps_todo      := p_session_init.stepsToDo;
-            v_new_rec.steps_done      := 0;
+            v_new_rec.proc_steps_todo := p_session_init.stepsToDo;
+            v_new_rec.proc_steps_done := 0;
             v_new_rec.status          := 0;
             v_new_rec.info            := 'START';
             
@@ -2260,7 +2265,7 @@ info(p_processId, 'persist_close_session');
         end;
     
         
-        FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2 default 'LILA_LOG') return number
+        FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2 default 'LILA_LOG') return number
         as
             p_session_init t_session_init;
         begin
@@ -2268,7 +2273,7 @@ info(p_processId, 'persist_close_session');
             p_session_init.processName := p_processName;
             p_session_init.logLevel := p_logLevel;
             p_session_init.daysToKeep := p_daysToKeep;
-            p_session_init.stepsToDo := p_stepsToDo;
+            p_session_init.stepsToDo := p_procStepsToDo;
             p_session_init.tabNameMaster := p_tabNameMaster;
         
             return new_session(p_session_init);
@@ -2378,20 +2383,24 @@ info(p_processId, 'persist_close_session');
             l_status        PLS_INTEGER;
             l_processInfo   VARCHAR2(2000);
             l_stepsToDo     PLS_INTEGER;
-            l_stepsDone     PLS_INTEGER;
+            l_procStepsDone     PLS_INTEGER;
             l_payload varchar2(1600);
         begin
             l_payload := JSON_QUERY(p_message, '$.payload');
             l_processId  := extractFromJsonNum(l_payload, 'process_id');
             l_status := extractFromJsonNum(l_payload, 'status');
-            l_processInfo := extractFromJsonStr(l_payload, 'info');
-            l_stepsToDo := extractFromJsonNum(l_payload, 'steps_todo');
-            l_stepsDone := extractFromJsonNum(l_payload, 'steps_done');
-            setAnyStatus(l_processId, l_status, l_processInfo, l_stepsToDo, l_stepsDone);
+            l_processInfo := extractFromJsonStr(l_payload, 'process_info');
+            l_stepsToDo := extractFromJsonNum(l_payload, 'proc_steps_todo');
+            l_procStepsDone := extractFromJsonNum(l_payload, 'proc_steps_done');
+            
+dbms_output.enable();
+dbms_output.put_line(p_message);
+dbms_output.put_line('+++++++++++++++++++++++++++++++++++++++ ' || l_processInfo);
+            setAnyStatus(l_processId, l_status, l_processInfo, l_stepsToDo, l_procStepsDone);
         end;
         --------------------------------------------------------------------------
 
-        procedure doRemote_stepDone(p_message varchar2)
+        procedure doRemote_procStepDone(p_message varchar2)
         as
             l_processId     NUMBER;
             l_payload varchar2(1600);
@@ -2399,9 +2408,7 @@ info(p_processId, 'persist_close_session');
             l_payload := JSON_QUERY(p_message, '$.payload');
             l_processId  := extractFromJsonNum(l_payload, 'process_id');
             
---            setAnyStatus(l_processId, 99, 'kacka', 70, 60);
-
-            STEP_DONE(l_processId);
+            PROC_STEP_DONE(l_processId);
         end;
         
         --------------------------------------------------------------------------
@@ -2432,8 +2439,8 @@ info(p_processId, 'persist_close_session');
         procedure doRemote_closeSession(p_clientChannel varchar2, p_message VARCHAR2)
         as
             l_processId   number; 
-            l_stepsToDo   PLS_INTEGER; 
-            l_stepsDone   PLS_INTEGER; 
+            l_procStepsToDo   PLS_INTEGER; 
+            l_procStepsDone   PLS_INTEGER; 
             l_processInfo varchar2(1000);
             l_status      PLS_INTEGER;
             l_payload varchar2(1600);
@@ -2444,8 +2451,8 @@ info(p_processId, 'persist_close_session');
         begin
             l_payload     := JSON_QUERY(p_message, '$.payload');
             l_processId   := extractFromJsonStr(l_payload, 'process_id');
-            l_stepsToDo   := extractFromJsonStr(l_payload, 'steps_todo');
-            l_stepsDone   := extractFromJsonNum(l_payload, 'steps_done');
+            l_procStepsToDo   := extractFromJsonStr(l_payload, 'proc_steps_todo');
+            l_procStepsDone   := extractFromJsonNum(l_payload, 'proc_steps_done');
             l_processInfo := extractFromJsonNum(l_payload, 'process_info');
             l_status      := extractFromJsonNum(l_payload, 'status');
             
@@ -2456,7 +2463,7 @@ info(p_processId, 'persist_close_session');
     
             checkLogsBuffer(l_processId, 'vor CLOSE_SESSION');
     
-            CLOSE_SESSION(l_processId, l_stepsToDo, l_stepsDone, l_processInfo, l_status);
+            CLOSE_SESSION(l_processId, l_procStepsToDo, l_procStepsDone, l_processInfo, l_status);
             
             DBMS_PIPE.RESET_BUFFER; -- Koffer leeren
             DBMS_PIPE.PACK_MESSAGE('{"process_id":' || l_processId || '}');        
@@ -2533,7 +2540,7 @@ info(p_processId, 'persist_close_session');
             l_processId := extractFromJsonStr(l_payload, 'process_id');
             l_session_init.processName := extractFromJsonStr(l_payload, 'process_name');
             l_session_init.logLevel    := extractFromJsonNum(l_payload, 'log_level');
-            l_session_init.stepsToDo   := extractFromJsonNum(l_payload, 'steps_todo');
+            l_session_init.stepsToDo   := extractFromJsonNum(l_payload, 'proc_steps_todo');
             l_session_init.daysToKeep  := extractFromJsonNum(l_payload, 'days_to_keep');
             l_session_init.tabNameMaster := extractFromJsonStr(l_payload, 'tabname_master');
     
@@ -2600,7 +2607,19 @@ info(p_processId, 'persist_close_session');
             );
         end;
         
-        --------------------------------------------------------------------------    
+        --------------------------------------------------------------------------
+        
+        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_monStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2
+        as
+            l_payload    varchar2(1000);
+        begin
+            
+            l_payload := '{"process_name":"' || p_processName || '", "log_level":' || p_logLevel || ', "steps_todo":' || 
+                            p_monStepsToDo || ', "days_to_keep":' || p_daysToKeep || ', "tabname_master":"' || p_tabNameMaster || '"}';
+                            
+            return server_new_session(l_payload);
+        
+        end;
         
         FUNCTION SERVER_NEW_SESSION(p_payload varchar2) RETURN NUMBER
         as
@@ -2912,8 +2931,8 @@ info(p_processId, 'persist_close_session');
                         WHEN 'SET_ANY_STATUS' then
                             doRemote_setAnyStatus(l_message);
                             
-                        WHEN 'STEP_DONE' then
-                            doRemote_stepDone(l_message);
+                        WHEN 'PROC_STEP_DONE' then
+                            doRemote_procStepDone(l_message);
                             
                         WHEN 'MARK_STEP' then
                             doRemote_markStep(l_message);
