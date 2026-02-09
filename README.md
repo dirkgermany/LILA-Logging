@@ -26,6 +26,7 @@ LILA is developed by a developer who hates over-engineered tools. Focus: 5 minut
   - [How to log](#how-to-log)
 - [Monitoring](#monitoring)
   - [How to monitor](#how-to-monitor)
+- [Roadmap](#roadmap)
 
 
 ## Key features
