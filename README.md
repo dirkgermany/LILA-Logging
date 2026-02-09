@@ -63,9 +63,9 @@ LILA-Logging introduces a high-performance Server-Client architecture using **Or
 LILA offers two execution models that can be used interchangeably:
 1. **In-Session Mode (Direct):** Initiated by `lila.new_session`. Log calls are executed immediately within your current database session. This is ideal for straightforward debugging and ensuring logs are persisted synchronously.
 2. **Decoupled Mode (Server-based):**
-   * Server Side: Start one or more LILA-Servers. These background processes monitor pipes for incoming commands.
-   * Client Side: Register via `lila.server_new_session`;. LILA automatically identifies the optimal available server.
-   * Execution: Log calls are serialized into a pipe and processed by the background server. This decouples the logging overhead from your application, minimizing the impact on the client's transaction time and performance.
+   * **Server Side:** Launch one or more LILA-Servers using `lila.start_server('SERVER_NAME');`. These background processes register under a custom name and monitor for incoming commands. You can scale by running multiple servers for the same name or use different names for logical separation.
+   * **Client Side:** Register via `lila.server_new_session('SERVER_NAME');`. LILA automatically identifies and connects to the specified available server.
+   * **Execution:** Log calls are serialized into a pipe and processed by the background server, minimizing the impact on your transaction time.
   
 > [!IMPORTANT]
 > **Unified API:** Regardless of the chosen mode, the logging API remains **identical**. You use the same `lila.log(...)` calls throughout your application.
@@ -76,7 +76,7 @@ LILA prioritizes the stability of your application. It uses a Hybrid Model to ba
 * Standard: Fire-and-Forget
 * Logs, metrics, and status updates are handled via Fire-and-Forget to minimize overhead. Zero latency for your business logic.
 * Active Throttling
-* To prevent pipe flooding during load peaks, LILA rate-limits hyperactive clients until the bottleneck is cleared.
+* As an optional safeguard, LILA rate-limits hyperactive clients during load peaks to prevent pipe flooding until the bottleneck is cleared.
 * Fail-Safe & Self-Healing
 * LILA monitors server response times. If a server times out, LILA automatically
   1. Switches to the next available server (Round-Robin).
