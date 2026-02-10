@@ -1,6 +1,12 @@
-create or replace PACKAGE LILA AS
+CREATE OR REPLACE PACKAGE LILA AS
+    /*
+     * LILA-Logging
+     * Dual-licensed under GPLv3 or Commercial License.
+     * See LICENSE or LICENSE_ENTERPRISE for details.
+     */
+
     /* Complete Doc and last version see https://github.com/dirkgermany/LILA-Logging/docs */
-LILA_VERSION constant varchar2(20) := 'v1.3.0';
+    LILA_VERSION constant varchar2(20) := 'v1.3.0';
 
     -- =========
     -- Log Level
