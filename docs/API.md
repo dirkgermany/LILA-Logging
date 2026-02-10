@@ -25,46 +25,27 @@
 
     
 ## Functions and Procedures
-
-### List of Functions and Procedures
-
-| Name               | Type      | Description                         | Scope
-| ------------------ | --------- | ----------------------------------- | -------
-| [`NEW_SESSION`](#function-new_session) | Function  | Opens a new log session; **Mandatory** | Log Session
-| [`CLOSE_SESSION`](#procedure-close_session) | Procedure | Ends a log session; **Mandatory** | Log Session
-| [`SET_PROCESS_STATUS`](#procedure-set_process_status) | Procedure | Sets the state of the log status | Log Session
-| [`SET_STEPS_TODO`](#procedure-set_steps_todo) | Procedure | Sets the required number of actions | Log Session
-| [`SET_STEPS_DONE`](#procedure-set_steps_todo) | Procedure | Sets the number of completed actions | Log Session
-| [`STEP_DONE`](#procedure-step_done) | Procedure | Increments the counter of completed steps | Log Session
-| [`INFO`](#general-logging-procedures) | Procedure | Writes INFO log entry               | Detail Logging
-| [`DEBUG`](#general-logging-procedures) | Procedure | Writes DEBUG log entry              | Detail Logging
-| [`WARN`](#general-logging-procedures) | Procedure | Writes WARN log entry               | Detail Logging
-| [`ERROR`](#general-logging-procedures) | Procedure | Writes ERROR log entry              | Detail Logging
-| [`LOG_DETAIL`](#procedure-log_detail) | Procedure | Writes log entry with any log level | Detail Logging
-| [`PROCEDURE IS_ALIVE`](#procedure-is-alive) | Procedure | Excecutes a very simple logging session | Test
-
+Parameters for procedures and functions can be mandatory, nullable, or optional. In the overview tables, they are marked as follows:
 
 ### Shortcuts for parameter requirement
 * <a id="M"> **M**andatory</a>
 * <a id="O"> **O**ptional</a>
 * <a id="N"> **N**ullable</a>
 
-### Session related Functions and Procedures
-Whenever the record in the *master table* is changed, the value of the field last_update will be updated.
-This mechanism is supports the monitoring features.
+---
+### Session Handling
+
+| Name               | Type      | Description                         | Scope
+| ------------------ | --------- | ----------------------------------- | -------
+| [`NEW_SESSION`](#function-new_session) | Function  | Opens a new log session | Session control
+| [`SERVER_NEW_SESSION`](#function-new_session) | Function  | Opens a new decoupled session | Session control
+| [`CLOSE_SESSION`](#procedure-close_session) | Procedure | Ends a log session | Session control
+
+All API calls are the same, independent of whether LILA is used 'locally' or in a 'decoupled' manner. One exception is the function `SERVER_NEW_SESSION`, which initializes the LILA package to function as a dedicated client, managing the communication with the LILA server seamlessly. The parameters and return value of `SERVER_NEW_SESSION` are identical to those of `NEW_SESSION`.
 
 #### Function NEW_SESSION
-The NEW_SESSION function starts the logging session for a process. This procedure must be called first. Calls to the API without a prior NEW_SESSION do not make sense or can (theoretically) lead to undefined states.
-Various function signatures are available for different scenarios. For the NEW_SESSION call exists a dedicated Type:
-
-##### Record Type for init
-TYPE t_session_init IS RECORD (
-    processName VARCHAR2(100),
-    logLevel PLS_INTEGER,
-    stepsToDo PLS_INTEGER,
-    daysToKeep PLS_INTEGER,
-    tabNameMaster VARCHAR2(100) DEFAULT 'LILA_LOG'
-);
+The NEW_SESSION resp. SERVER_NEW_SESSION function starts the logging session for a process. This procedure must be called first. Calls to the API without a prior NEW_SESSION do not make sense or can (theoretically) lead to undefined states.
+NEW_SESSION and SERVER_NEW_SESSION are overloaded so various signatures are available.
 
 \
 *Option 1*
@@ -125,6 +106,52 @@ gProcessId := lila.new_session('my application', lila.logLevelWarn, 100, 30);
 -- the same but dedicated log table
 gProcessId := lila.new_session('my application', lila.logLevelWarn, 100, 30, 'MY_LOG_TABLE');
 ```
+
+
+---
+### Process Control
+> [!NOTE]
+> Whenever a record in the master table is changed, the last_update field is updated implicitly. This mechanism is designed to support the monitoring features.
+
+#### Setting Values
+
+| Name               | Type      | Description                         | Scope
+| ------------------ | --------- | ----------------------------------- | -------
+| [`SET_PROCESS_STATUS`](#procedure-set_process_status) | Procedure | Sets the state of the log status | Log Session
+| [`SET_STEPS_TODO`](#procedure-set_steps_todo) | Procedure | Sets the required number of actions | Log Session
+| [`SET_STEPS_DONE`](#procedure-set_steps_todo) | Procedure | Sets the number of completed actions | Log Session
+| [`STEP_DONE`](#procedure-step_done) | Procedure | Increments the counter of completed steps | Log Session
+
+#### Querying Values
+
+---
+### Logging
+| [`INFO`](#general-logging-procedures) | Procedure | Writes INFO log entry               | Detail Logging
+| [`DEBUG`](#general-logging-procedures) | Procedure | Writes DEBUG log entry              | Detail Logging
+| [`WARN`](#general-logging-procedures) | Procedure | Writes WARN log entry               | Detail Logging
+| [`ERROR`](#general-logging-procedures) | Procedure | Writes ERROR log entry              | Detail Logging
+
+---
+### Metrics
+#### Setting Values
+#### Querying Values
+
+---
+### Server Control
+
+| [`PROCEDURE IS_ALIVE`](#procedure-is-alive) | Procedure | Excecutes a very simple logging session | Test
+
+
+
+
+
+
+
+
+### Session related Functions and Procedures
+Whenever the record in the *master table* is changed, the value of the field last_update will be updated.
+This mechanism is supports the monitoring features.
+
 
 #### Procedure CLOSE_SESSION
 Ends a logging session with optional final informations. Four function signatures are available for different scenarios.
@@ -428,3 +455,12 @@ logLevelWarn    constant number := 2;
 logLevelInfo    constant number := 4;
 logLevelDebug   constant number := 8;
 ```
+
+### Record Type for init
+TYPE t_session_init IS RECORD (
+    processName VARCHAR2(100),
+    logLevel PLS_INTEGER,
+    stepsToDo PLS_INTEGER,
+    daysToKeep PLS_INTEGER,
+    tabNameMaster VARCHAR2(100) DEFAULT 'LILA_LOG'
+);
