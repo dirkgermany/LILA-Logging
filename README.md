@@ -286,6 +286,7 @@ LILA is designed for high-concurrency environments. The following results were a
 - [ ] **Elastic Resource Management:**
     * Automatically scale LILA-Server instances based on real-time pipe throughput
     * Ensure Graceful Shutdown of redundant instances to free up CPU and SGA without data loss
+- [ ] **List active Sessions:** Retrieves a list of all active sessions, pipes and so on
 
 
 ## License
