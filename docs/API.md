@@ -25,84 +25,8 @@
 
 </details>
 
-## At first
-This documentation strives to be comprehensive and accurate.
 
-The detailed nature of this document may give the impression that using LILA is complex and time-consuming and requires a correspondingly high level of training.
-
-In fact, a few interface calls are all that is needed for comprehensive monitoring or logging. Existing program code for the processes to be monitored also requires only minor adjustments.
-Nevertheless, for a basic understanding of LILA and smooth integration into your applications, I recommend reading my hopefully not too boring explanations below.
-
-However, if you want to get started right away and don't want to waste time reading documentation, I recommend the sample application. If you look at the code of this application, you will probably already understand and be able to use the most important concepts of LILA.
-And who knows, when you have a quiet moment, you might decide to take another look at this document after all.
-
-## Overview
-LILA is nothing more than a PL/SQL Package.
-
-This package enables logging from other packages.
-Different packages can use logging simultaneously from a single session and write to either dedicated or the same LOG table.
-        
-Even when using a shared LOG table, the LOG entries can be identified by process name and — in the case of multiple calls to the same process — by process IDs (filtered via SQL).
-For reasons of clarity, however, the use of dedicated LOG tables could make sense.
-
-There is exactly one log entry for each logging process in the so called *master table*.
-Additional informations (error, warn, info, debug) about the process are written to the so called *detail table* (see [`Log Tables`](#log-tables)).
-        
-The LOG entries are persisted within encapsulated transactions. This means that logging is independent of the (missing) COMMIT of the calling processes.
-
-## Log Session
-The log session is a central concept within LILA and sets it apart from many other PL/SQL logging frameworks.
-
-### What it is
-*Why use a so called Log Session? What is it?*
-
-First of all: don't panic! The term “log session” simply describes various dependencies and states of logging related to the calling process. Ultimately, a log session encapsulates the logging configuration tailored to the respective process (log level, log tables, counters for details, etc.).
-A log session is **not** an additional database session, instance of a database process, or anything similar.
-
-A Log Session accompanies the execution of a PL/SQL process. Just as each running instance of a process is unique, so too is each Log Session.
-
-*Why can't LILA simply write directly to the log tables without a Log Session, like other logging frameworks? Wouldn't it be sufficient to differentiate using the process name, for example?*
-
-LILA not only enables parallel logging from multiple processes, but also — as mentioned above — different configuration values for each process. The configuration values are part of a log session.
-
-### Log Session Life Cycle
-Ideally, the Log Session begins when the process starts and ends when the process ends.
-**With the beginning** of a Log Session the one and only log entry is written to the *master table*.
-**During** the Log Session this one log entry can be updated and additional informations can be written to the *detail table*.
-**At the end** of a Log Session the log entry again can be updated.
-
->**Important Note on Data Persistence:**
->LILA utilizes high-performance in-memory buffering to minimize database load. Monitoring data and process states are collected in RAM and only persisted to the >database once a threshold (e.g., 100 entries) is reached.
->
->**To guarantee full data integrity, calling CLOSE_SESSION at the end of your process is mandatory.**
->
->If a process terminates abnormally (e.g., due to an uncaught exception) without reaching CLOSE_SESSION, any data remaining in the buffer since the last automatic >flush will be lost. We strongly recommend including CLOSE_SESSION in your application’s central exception handler.
-
-Ultimately, all that is required for a complete life cycle is to call the NEW_SESSION function at the beginning of the session and the CLOSE_SESSION procedure at the end of the session.
-
-## Log Tables
-The logging takes place in two tables. Below, I distinguish between them by referring to them as the *master table* and the *detail table*.
-
-Table *master table* is the leading table and contains the started processes, their names, and status. There is exactly one entry in this table for each process and log session.
-
-The entries in *detail table* contain further details corresponding to the entries in Table 1.
-
-Both tables have standard names.
-At the same time, the name of the *master table* is the so-called prefix for the *detail table*.
-        
-* The default name for the *master table* is LILA_LOG
-* The default name for the *detail table* is LILA_LOG_DETAIL
-       
-The name of table *master table* can be customized; for *detail table*, the 
-selected name of table *master table* is added as a prefix and _DETAIL is appended.
-    
-Example:
-Selected name *master table* = MY_LOG_TABLE
-
-Set name *detail table* is automatically = MY_LOG_TABLE_DETAIL
-
-## Sequence
-Logging uses a sequence to assign process IDs. The name of the sequence is SEQ_LILA_LOG.
+This document serves as the LILA API reference, providing a straightforward description of the programming interface. For those new to LILA, I recommend starting with the #architecture and concepts.md document, which (hopefully) provides a fundamental understanding of how LILA works. Furthermore, the demos and examples in the #demo folder demonstrate how easily the LILA API can be integrated.
 
 ## Log Level
 Depending on the selected log level, additional information is written to the *detail table*.
