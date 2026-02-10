@@ -248,7 +248,7 @@ SELECT my_app.getStatus(1) proc_status FROM dual;
 LILA is designed for high-concurrency environments. The following results were achieved on standard **Consumer Hardware** (Fujitsu LIFEBOOK A-Series) running an **Oracle Database inside VirtualBox**. This demonstrates the massive efficiency of the Pipe-to-Bulk architecture, even when facing significant virtualization overhead (I/O emulation and CPU scheduling):
 *   **Total Messages:** 9,000,000 (Logs, Metrics, and Status Updates)
 *   **Clients:** 3 parallel sessions (3M messages each)
-*   **LILA-Servers:** 2 active instances (Intelligent Load Balancing)
+*   **LILA-Servers:** 2 active instances
 *   **Total Duration:** ~45 minutes
 *   **Peak Throughput:** ~3,300 - 5,000 messages per second
 
