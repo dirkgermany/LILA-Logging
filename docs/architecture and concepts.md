@@ -22,7 +22,22 @@ LILA is used to monitor applications that ultimately represent a process of some
 A process specifically includes its name, lifecycle information, and planned as well as completed work steps. 
 
 ## Session
-A session represents the lifecycle of a process. A process 'lives' within a session. A session is opened once and closed once. For clean, traceable, and consistent process states, the final closing of sessions is indispensable. 
+A session represents the lifecycle of a process. A process 'lives' within a session. A session is opened once and closed once. For clean, traceable, and consistent process states, the final closing of sessions is indispensable.
+
+### Log Session Life Cycle
+Ideally, the Log Session begins when the process starts and ends when the process ends.
+**With the beginning** of a Log Session the one and only log entry is written to the *master table*.
+**During** the Log Session this one log entry can be updated and additional informations can be written to the *detail table*.
+**At the end** of a Log Session the log entry again can be updated.
+
+>**Important Note on Data Persistence:**
+>LILA utilizes high-performance in-memory buffering to minimize database load. Monitoring data and process states are collected in RAM and only persisted to the >database once a threshold (e.g., 100 entries) is reached.
+>
+>**To guarantee full data integrity, calling CLOSE_SESSION at the end of your process is mandatory.**
+>
+>If a process terminates abnormally (e.g., due to an uncaught exception) without reaching CLOSE_SESSION, any data remaining in the buffer since the last automatic >flush will be lost. We strongly recommend including CLOSE_SESSION in your application’s central exception handler.
+
+Ultimately, all that is required for a complete life cycle is to call the NEW_SESSION function at the beginning of the session and the CLOSE_SESSION procedure at the end of the session.
 
 The session is more of a technical perspective on the workflows within LILA, while the process is the view 'to the outside.' I believe these two terms—session and process—can be used almost synonymously in daily LILA operations. It doesn't really hurt if they are mixed a bit.
 
