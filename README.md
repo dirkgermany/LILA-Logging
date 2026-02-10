@@ -199,8 +199,6 @@ Monitor your processes according to your requirements:
 * Deep Dive (Details): Query the detail table for the full chronological history and error stack of a process.
 * API Access: Use the built-in getter functions to retrieve status and progress directly within your PL/SQL logic or UI components.
 
-For comprehensive information, refer to [documentation file "monitoring.md"](docs/monitoring.md).
-
 ### How to monitor
 Three options:
 
