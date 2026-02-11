@@ -546,7 +546,7 @@
                     log_level number,
                     process_start timestamp(6),
                     process_end timestamp(6),
-                    last_update timestamp(6),
+                    process_last_update timestamp(6),
                     proc_steps_todo number,
                     proc_steps_done number,
                     status number(2,0),
@@ -715,7 +715,7 @@
                 log_level,
                 process_start,
                 process_end,
-                last_update,
+                process_last_update,
                 proc_steps_todo,
                 proc_steps_done,
                 status,
@@ -1460,7 +1460,7 @@
             sqlStatement := '
             update PH_MASTER_TABLE
             set status = :PH_STATUS,
-                last_update = current_timestamp,
+                process_last_update = current_timestamp,
                 process_end = :PH_PROCESS_END,
                 proc_steps_todo  = :PH_PROC_STEPS_TODO,
                 proc_steps_done  = :PH_PROC_STEPS_DONE,
@@ -1499,7 +1499,7 @@
             sqlStatement := '
             update PH_MASTER_TABLE
             set process_end = current_timestamp,
-                last_update = current_timestamp';
+                process_last_update = current_timestamp';
     
             if p_procStepsDone is not null then
                 sqlStatement := sqlStatement || ', proc_steps_done = :PH_PROC_STEPS_DONE';
@@ -1564,7 +1564,7 @@
                 id,
                 process_name,
                 process_start,
-                last_update,
+                process_last_update,
                 process_end,
                 proc_steps_todo,
                 proc_steps_done,
@@ -2022,17 +2022,17 @@
                l_serverMsg := 'Server Response Get_PROCESS_DATA: ' || l_response;
             else                
                 l_payload := JSON_QUERY(l_response, '$.payload');
-                l_process_rec.id                := extractFromJsonStr(l_payload, 'process_id');
-                l_process_rec.process_name      := extractFromJsonStr(l_payload, 'process_name');
-                l_process_rec.log_level         := extractFromJsonNum(l_payload, 'log_level');
-                l_process_rec.process_start     := extractFromJsonTime(l_payload, 'process_start');
-                l_process_rec.process_end       := extractFromJsonTime(l_payload, 'process_end');
-                l_process_rec.last_update       := extractFromJsonTime(l_payload, 'last_update');
-                l_process_rec.info              := extractFromJsonStr(l_payload, 'process_info');
-                l_process_rec.status            := extractFromJsonNum(l_payload, 'process_status');
-                l_process_rec.proc_steps_todo   := extractFromJsonNum(l_payload, 'proc_steps_todo');
-                l_process_rec.proc_steps_done   := extractFromJsonNum(l_payload, 'proc_steps_done');
-                l_process_rec.tab_name_master   := extractFromJsonStr(l_payload, 'tabname_master');            
+                l_process_rec.id                  := extractFromJsonStr(l_payload, 'process_id');
+                l_process_rec.process_name        := extractFromJsonStr(l_payload, 'process_name');
+                l_process_rec.log_level           := extractFromJsonNum(l_payload, 'log_level');
+                l_process_rec.process_start       := extractFromJsonTime(l_payload, 'process_start');
+                l_process_rec.process_end         := extractFromJsonTime(l_payload, 'process_end');
+                l_process_rec.process_last_update := extractFromJsonTime(l_payload, 'process_last_update');
+                l_process_rec.info                := extractFromJsonStr(l_payload, 'process_info');
+                l_process_rec.status              := extractFromJsonNum(l_payload, 'process_status');
+                l_process_rec.proc_steps_todo     := extractFromJsonNum(l_payload, 'proc_steps_todo');
+                l_process_rec.proc_steps_done     := extractFromJsonNum(l_payload, 'proc_steps_done');
+                l_process_rec.tab_name_master     := extractFromJsonStr(l_payload, 'tabname_master');            
             end if ; 
             
             return l_process_rec;
@@ -2098,6 +2098,14 @@
         as
         begin
             return get_process_data(p_processId).process_end;
+        end;
+    
+        --------------------------------------------------------------------------
+        
+        function GET_PROCESS_LAST_UPDATE(p_processId NUMBER) return timestamp
+        as
+        begin
+            return get_process_data(p_processId).process_last_update;
         end;
     
         --------------------------------------------------------------------------
@@ -2298,16 +2306,16 @@
             end if ;
     
             -- copy new details data to memory
-            v_new_rec.id              := pProcessId;
-            v_new_rec.tab_name_master   := p_session_init.tab_name_master;
-            v_new_rec.process_name    := p_session_init.processName;
-            v_new_rec.process_start   := current_timestamp;
-            v_new_rec.process_end     := null;
-            v_new_rec.last_update     := null;
-            v_new_rec.proc_steps_todo := p_session_init.proc_stepsToDo;
-            v_new_rec.proc_steps_done := 0;
-            v_new_rec.status          := 0;
-            v_new_rec.info            := 'START';
+            v_new_rec.id                  := pProcessId;
+            v_new_rec.tab_name_master     := p_session_init.tab_name_master;
+            v_new_rec.process_name        := p_session_init.processName;
+            v_new_rec.process_start       := current_timestamp;
+            v_new_rec.process_end         := null;
+            v_new_rec.process_last_update := null;
+            v_new_rec.proc_steps_todo     := p_session_init.proc_stepsToDo;
+            v_new_rec.proc_steps_done     := 0;
+            v_new_rec.status              := 0;
+            v_new_rec.info                := 'START';
             
             g_process_cache(pProcessId) := v_new_rec;
             return pProcessId;
@@ -2563,7 +2571,7 @@
                 'log_level'         value l_process_rec.log_level,
                 'process_start'     value l_process_rec.process_start,
                 'process_end'       value l_process_rec.process_end,
-                'last_update'       value l_process_rec.last_update,
+                'process_last_update'       value l_process_rec.process_last_update,
                 'process_info'      value l_process_rec.info,
                 'process_status'    value l_process_rec.status,
                 'proc_steps_todo'   value l_process_rec.proc_steps_todo,
