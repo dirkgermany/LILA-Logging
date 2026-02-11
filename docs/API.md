@@ -28,9 +28,10 @@
 Parameters for procedures and functions can be mandatory, nullable, or optional. In the overview tables, they are marked as follows:
 
 ### Shortcuts for parameter requirement
-* <a id="M"> **M**andatory</a>
-* <a id="O"> **O**ptional</a>
-* <a id="N"> **N**ullable</a>
+* <a id="M"> ***M***andatory</a>
+* <a id="O"> ***O***ptional</a>
+* <a id="N"> ***N***ullable</a>
+* <a id="D"> ***D***efault</a>
 
 ---
 ### Session Handling
@@ -48,48 +49,70 @@ All API calls are the same, independent of whether LILA is used 'locally' or in 
 The `NEW_SESSION` resp. `SERVER_NEW_SESSION` function starts the logging session for a process. This procedure must be called first. Calls to the API without a prior `NEW_SESSION` do not make sense or can (theoretically) lead to undefined states.
 `NEW_SESSION` and `SERVER_NEW_SESSION` are overloaded so various signatures are available.
 
-\
-*Option 1*
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processName | VARCHAR2| freely selectable name for identifying the process; is written to *master table* | [`M`](#m)
-| p_logLevel | NUMBER | determines the level of detail in *detail table* (see above) | [`M`](#m)
-| p_TabNameMaster | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#o)
+**Signatures**
+To accommodate different logging requirements, the following variants are available:
 
-\
-*Option 2*
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processName | VARCHAR2| freely selectable name for identifying the process; is written to *master table* | [`M`](#m)
-| p_logLevel | NUMBER | determines the level of detail in *detail table* (see above) | [`M`](#m)
-| p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`N`](#n)
-| p_TabNameMaster | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#o)
+<details>
+  <summary><b>1. Basic Mode</b> (Standard initialization)</summary>
+  
+ ```sql
+  FUNCTION NEW_SESSION(
+    p_processName   VARCHAR2, 
+    p_logLevel      NUMBER, 
+    p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG'
+  )
+ ```
+</details>
 
-\
-*Option 3*
+<details>
+  <summary><b>2. Retention Mode</b> (With automated cleanup)</summary>
+
+```sql
+FUNCTION NEW_SESSION(
+  p_processName   VARCHAR2, 
+  p_logLevel      NUMBER, 
+  p_daysToKeep    NUMBER, 
+  p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG'
+)
+ ```
+</details>
+
+<details>
+  <summary><b>3. Full Progress Mode</b> (With progress tracking)</summary>
+
+```sql
+FUNCTION NEW_SESSION(
+  p_processName   VARCHAR2, 
+  p_logLevel      NUMBER, 
+  p_stepsToDo     NUMBER, 
+  p_daysToKeep    NUMBER, 
+  p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG'
+)
+ ```
+</details>
+
+
 | Parameter | Type | Description | Required
 | --------- | ---- | ----------- | -------
 | p_processName | VARCHAR2| freely selectable name for identifying the process; is written to *master table* | [`M`](#m)
 | p_logLevel | NUMBER | determines the level of detail in *detail table* (see above) | [`M`](#m)
-| p_stepsToDo | NUMBER | defines how many steps must be done during the process | [`M`](#m)
-| p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`N`](#n)
-| p_TabNameMaster | VARCHAR2 | optional prefix of the LOG table names (see above) | [`O`](#o)
+| p_stepsToDo | NUMBER | defines how many steps must be done during the process | [`O`](#o)
+| p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`O`](#o)
+| p_TabNameMaster | VARCHAR2 | optional prefix of the LOG table names (see above) | [`D`](#d)
 
 **Returns**
-Type: NUMBER
-Description: The new process ID; this ID is required for subsequent calls in order to be able to assign the LOG calls to the process
+* Type: NUMBER
+* Description: The new process ID; this ID is required for subsequent calls in order to be able to assign the LOG calls to the process
 
-**Syntax**
+**Example (PL/SQL)**
 ```sql
-FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
-FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
-FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
+DECLARE
+  v_processId NUMBER;
+BEGIN
+  -- Using the "Retention" variant
+  v_processId := NEW_SESSION('DATA_IMPORT', 2, 30);
+END;
 
-FUNCTION SERVER_NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
-FUNCTION SERVER_NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
-FUNCTION SERVER_NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
-
-```
 
 #### Procedure CLOSE_SESSION
 Ends a logging session with optional final informations. Four function signatures are available for different scenarios.
