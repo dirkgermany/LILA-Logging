@@ -50,7 +50,8 @@ The functions and procedures are organized into the following five groups:
 | [SERVER_NEW_SESSION](#function-new_session--server_new_session) | Function  | Opens a new decoupled session | Session control
 | [CLOSE_SESSION](#procedure-close_session) | Procedure | Ends a log session | Session control
 
-All API calls are the same, independent of whether LILA is used 'locally' or in a 'decoupled' manner. One exception is the function `SERVER_NEW_SESSION`, which initializes the LILA package to function as a dedicated client, managing the communication with the LILA server seamlessly. **The parameters and return value of `SERVER_NEW_SESSION` are identical to those of `NEW_SESSION`.**
+> [!NOTE]
+> All API calls are the same, independent of whether LILA is used 'locally' or in a 'decoupled' manner. One exception is the function `SERVER_NEW_SESSION`, which initializes the LILA package to function as a dedicated client, managing the communication with the LILA server seamlessly. **The parameters and return value of `SERVER_NEW_SESSION` are identical to those of `NEW_SESSION`.**
 
 
 #### Function NEW_SESSION / SERVER_NEW_SESSION
@@ -215,12 +216,12 @@ Documents the lifecycle of a process.
 | [`STEP_DONE`](#procedure-step_done) | Procedure | Increments the counter of completed steps | Process
 | [`SET_STEPS_DONE`](#procedure-set_steps_todo) | Procedure | Sets the number of completed actions | Process
 | [`GET_PROC_STEPS_DONE`](fFunction-get_proc_steps_done) | FUNCTION | Returns number of already finished steps | Process
-| [`GET_PROC_STEPS_TODO`](fFunction-get_proc_steps_done) | FUNCTION | Returns number of steps to do
-| [`GET_PROCESS_START`](#function-get_process_start) | FUNCTION | Returns time of process start
-| [`GET_PROCESS_END`](#function-get_process_end) | FUNCTION | Returns time of process end (if finished)
-| [`GET_PROCESS_STATUS`](#function-get_process_status) | FUNCTION | Returns the process state
-| [`GET_PROCESS_INFO`](#function-get_process_info) | FUNCTION | Returns info text about process
-| [`GET_PROCESS_DATA`](#function-get_process_data) | FUNCTION | Returns all process data as a record (see below) 
+| [`GET_PROC_STEPS_TODO`](fFunction-get_proc_steps_done) | FUNCTION | Returns number of steps to do | Process
+| [`GET_PROCESS_START`](#function-get_process_start) | FUNCTION | Returns time of process start | Process
+| [`GET_PROCESS_END`](#function-get_process_end) | FUNCTION | Returns time of process end (if finished) | Process
+| [`GET_PROCESS_STATUS`](#function-get_process_status) | FUNCTION | Returns the process state | Process
+| [`GET_PROCESS_INFO`](#function-get_process_info) | FUNCTION | Returns info text about process | Process
+| [`GET_PROCESS_DATA`](#function-get_process_data) | FUNCTION | Returns all process data as a record (see below) | Process 
 
 **Procedures (Setter)**
   
@@ -403,10 +404,10 @@ For convenience, the configurable log levels are also declared as constants with
 
 | Name               | Type      | Description                         | Scope
 | ------------------ | --------- | ----------------------------------- | -------
-| [`INFO`](#general-logging-procedures) | Procedure | Writes INFO log entry  | Detail Logging
-| [`DEBUG`](#general-logging-procedures) | Procedure | Writes DEBUG log entry  | Detail Logging
-| [`WARN`](#general-logging-procedures) | Procedure | Writes WARN log entry  | Detail Logging
-| [`ERROR`](#general-logging-procedures) | Procedure | Writes ERROR log entry | Detail Logging
+| [`ERROR`](#procedure-error) | Procedure | Writes ERROR log entry | Logging
+| [`WARN`](#procedure-warn) | Procedure | Writes WARN log entry  | Logging
+| [`INFO`](#procedure-error) | Procedure | Writes INFO log entry  | Logging
+| [`DEBUG`](#procedure-debug) | Procedure | Writes DEBUG log entry  | Logging
 
 #### Procedure ERROR
 Writes a log entry with severity ERROR. This is the lowest numerical value (highest priority). Independent of the activated log level, ERROR messages are always stored.
@@ -441,19 +442,48 @@ Writes Log with severity INFO.
 Writes a log entry with severity DEBUG. By default, LILA operates 'silently,' meaning it does not raise exceptions to avoid disrupting the main process. However, when log level DEBUG is activated, caught exceptions will be re-thrown.
 
  ```sql
-  PROCEDURE LOG(
+  PROCEDURE DEBUG(
     p_processId     NUMBER,
     p_logText       VARCHAR2
   )
  ```
 
-
 **Parameters**
 
+| Parameter | Type | Description | Required
+| --------- | ---- | ----------- | -------
+| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
+| p_logText   | VARCHAR2 | the log text | [`M`](#m)
 
 ---
 ### Metrics
+
+| Name               | Type      | Description                         | Scope
+| ------------------ | --------- | ----------------------------------- | -------
+| [`MARK_STEP`](#procedure-mark_step) | Procedure | Sets a metric action | Metrics
+| [`SET_STEPS_TODO`](#procedure-set_steps_todo) | Procedure | Sets the required number of actions | Metrics
+| [`STEP_DONE`](#procedure-step_done) | Procedure | Increments the counter of completed steps | Metrics
+| [`SET_STEPS_DONE`](#procedure-set_steps_todo) | Procedure | Sets the number of completed actions | Metrics
+| [`GET_PROC_STEPS_DONE`](fFunction-get_proc_steps_done) | FUNCTION | Returns number of already finished steps | Metrics
+
 #### Setting Values
+#### PROCEDURE MARK_STEP
+Reports a completed work step, which typically represents an intermediate stage in the process lifecycle. For this reason, markers must not be confused with the actual process steps.
+The MARK_STEP procedure reports a completed work step. Markers are distinguished by the `p_actionName` parameter. A process can contain any number of action names, enabling highly granular monitoring.
+With every marker report, LILA calculates:
+* the time elapsed for this marker since the last report (except, of course, for the very first report of this action name),
+* the total number of reports for this marker to date (simple increment),
+* the average time consumed for all markers sharing the same `p_actionName`, and
+* whether the time span between markers deviates significantly from the average.
+
+ ```sql
+  PROCEDURE MARK_STEP(
+    p_processId     NUMBER,
+    p_actionName    VARCHAR2,
+    p_timestamp     TIMESTAMP DEFAULT NULL
+  )
+ ```
+
 #### Querying Values
 
 ---
@@ -461,62 +491,6 @@ Writes a log entry with severity DEBUG. By default, LILA operates 'silently,' me
 
 | [`PROCEDURE IS_ALIVE`](#procedure-is-alive) | Procedure | Excecutes a very simple logging session | Test
 
-
-
-### Write Logs related Procedures
-#### General Logging Procedures
-The detailed log entries in *detail table* are written using various procedures.
-Depending on the log level corresponding to the desired entry, the appropriate procedure is called.
-
-The procedures have the same signatures and differ only in their names.
-Their descriptions are therefore summarized below.
-
-
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-| p_stepInfo | VARCHAR2 | Free text with information about the process | [`M`](#m)
-
-**Syntax and Examples**
-```sql
--- Syntax
----------
-PROCEDURE ERROR(p_processId NUMBER, p_stepInfo VARCHAR2)
-PROCEDURE WARN(p_processId NUMBER, p_stepInfo VARCHAR2)
-PROCEDURE INFO(p_processId NUMBER, p_stepInfo VARCHAR2)
-PROCEDURE DEBUG(p_processId NUMBER, p_stepInfo VARCHAR2)
-
--- Usage
---------
--- assuming that gProcessId is the global stored process ID
-
--- write an error
-lila.error(gProcessId, 'Something happened');
--- write a debug information
-lila.debug(gProcessId, 'Function was called');
-```
-
-#### Procedure LOG_DETAIL
-Writes a LOG entry, regardless of the currently set LOG level.
-
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-| p_stepInfo | VARCHAR2 | Free text with information about the process | [`M`](#m)
-| p_logLevel | NUMBER | This log level is written into the detail table | [`M`](#m)
-
-**Syntax and Examples**
-```sql
--- Syntax
----------
-PROCEDURE LOG_DETAIL(p_processId NUMBER, p_stepInfo VARCHAR2, p_logLevel NUMBER);
-
--- Usage
---------
--- assuming that gProcessId is the global stored process ID
-
--- write a log record
-lila.log_detail(gProcessId, 'I ignore the log level');
 ```
 ### Testing
 Independent to other Packages you can check if LILA works in general.
@@ -524,15 +498,7 @@ Independent to other Packages you can check if LILA works in general.
 #### Procedure IS_ALIVE
 Creates one entry in the *master table* and one in the *detail table*.
 
-This procedure needs no parameters.
-```sql
--- execute the following statement in sql window
-execute lila.is_alive;
--- check data and note the process_id
-select * from lila_log where process_name = 'LILA Life Check';
--- check details using the process_id
-select * from lila_log_detail where process_id = <process id>;
-```
+
 
 ## Appendix
 ### Log Level
