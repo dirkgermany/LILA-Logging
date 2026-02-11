@@ -291,6 +291,18 @@ Sets the total number of completed steps. Note: Calling this procedure overwrite
 * Type: PLS_INTEGER
 * Description: Number of planned steps
 
+#### Function GET_PROCESS_START
+
+ ```sql
+  FUNCTION GET_PROCESS_START(
+    p_processId     NUMBER
+  )
+ ```
+
+**Returns**
+* Type: TIMESTAMP
+* Description: Numeric state of the process; depends entirely on the specific application scenario 
+
 #### Function GET_PROCESS_STATUS
 
  ```sql
@@ -311,19 +323,6 @@ Sets the total number of completed steps. Note: Calling this procedure overwrite
     p_processId     NUMBER
   )
  ```
-
-
-#### Function GET_PROCESS_STATUS
-
- ```sql
-  FUNCTION GET_PROCESS_STATUS(
-    p_processId     NUMBER
-  )
- ```
-
-**Returns**
-* Type: PLS_INTEGER
-* Description: Numeric state of the process; depends entirely on the specific application scenario 
 
 
 
