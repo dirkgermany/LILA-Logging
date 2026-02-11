@@ -208,7 +208,6 @@ EXCEPTION WHEN OTHERS THEN
 ### Process Control
 Documents the lifecycle of a process.
 
-
 | Name               | Type      | Description                         | Scope
 | ------------------ | --------- | ----------------------------------- | -------
 | [`SET_PROCESS_STATUS`](#procedure-set_process_status) | Procedure | Sets the state of the log status | Process
@@ -267,6 +266,17 @@ Sets the total number of completed steps. Note: Calling this procedure overwrite
 
 > [!NOTE]
 > Whenever a record in the master table is changed, the `last_update field` is updated implicitly. This mechanism is designed to support the monitoring features.
+
+**Parameters**
+
+| Parameter | Type | Description | Required
+| --------- | ---- | ----------- | -------
+| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
+| p_processStatus | PLS_INTEGER | information about the overall state of the process | [`O`](#o)
+| p_stepsToDo | PLS_INTEGER | Number of work steps that would have been necessary for complete processing. This value must be managed by the calling package | [`N`](#n)
+| p_stepsDone | PLS_INTEGER | Number of work steps that were actually processed. This value must be managed by the calling package | [`N`](#n)
+| p_processInfo | VARCHAR2 | Final information about the process (e.g., a readable status) | [`N`](#n)
+| p_status | PLS_INTEGER | Final status of the process (freely selected by the calling package) | [`N`](#n)
 
 **Functions (Getter)**
 
@@ -354,7 +364,7 @@ Reads the INFO-Text which is part of the process record. Likewise flexible and c
 > [!NOTE]
 > Every query for process data has an impact—albeit minor—on the overall system performance.
 > If such queries occur only sporadically or if only a few attributes are needed (e.g., the number of completed process steps), this impact is negligible. However, if queries are called frequently and several of the functions mentioned above are used (e.g., `GET_PROCESS_INFO`, `GET_PROCESS_STATUS`, `GET_PROC_STEPS_DONE`, ...), it is recommended to request this information collectively.
-> For this purpose, the function `GET_PROCESS_DATA` provides a record containing all relevant process data 'in one go': `t_process_rec` (see below). I recommend using this function whenever multiple data points of a process are of interest.
+> For this purpose, the function `GET_PROCESS_DATA` provides a record containing all relevant process data 'in one go'. This record serves as the exclusive way to retrieve the process name and the tab_name_master attribute. Following LILA's naming convention, the detail table's name is deterministic: it always uses the master table's name as a prefix, followed by the suffix `_DETAIL`.
 
  ```sql
   FUNCTION GET_PROCESS_DATA(
@@ -372,26 +382,36 @@ Usefull for getting a complete set of all process data. Using this record avoids
 
 ```sql
 TYPE t_process_rec IS RECORD (
-    id              NUMBER(19,0),
-    process_name    varchar2(100),
-    log_level       PLS_INTEGER,
-    process_start   TIMESTAMP,
-    process_end     TIMESTAMP,
-    last_update     TIMESTAMP,
-    proc_steps_todo PLS_INTEGER,
-    proc_steps_done PLS_INTEGER,
-    status          PLS_INTEGER,
-    info            VARCHAR2(4000),
-    tab_name_master   VARCHAR2(100)
+    id                  NUMBER(19,0),
+    process_name        VARCHAR2(100),
+    log_level           PLS_INTEGER,
+    process_start       TIMESTAMP,
+    process_end         TIMESTAMP,
+    process_last_update TIMESTAMP,
+    proc_steps_todo     PLS_INTEGER,
+    proc_steps_done     PLS_INTEGER,
+    status              PLS_INTEGER,
+    info                VARCHAR2(4000),
+    tab_name_master     VARCHAR2(100)
 );
 ```
 
+**Parameters**
+All 
+
+
 ---
 ### Logging
+
+
 | [`INFO`](#general-logging-procedures) | Procedure | Writes INFO log entry               | Detail Logging
 | [`DEBUG`](#general-logging-procedures) | Procedure | Writes DEBUG log entry              | Detail Logging
 | [`WARN`](#general-logging-procedures) | Procedure | Writes WARN log entry               | Detail Logging
 | [`ERROR`](#general-logging-procedures) | Procedure | Writes ERROR log entry              | Detail Logging
+
+
+
+**Parameters**
 
 
 ---
