@@ -37,9 +37,9 @@ Parameters for procedures and functions can be mandatory, nullable, or optional.
 
 | Name               | Type      | Description                         | Scope
 | ------------------ | --------- | ----------------------------------- | -------
-| [`NEW_SESSION`](#function-new_session) | Function  | Opens a new log session | Session control
-| [`SERVER_NEW_SESSION`](#function-new_session) | Function  | Opens a new decoupled session | Session control
-| [`CLOSE_SESSION`](#procedure-close_session) | Procedure | Ends a log session | Session control
+| [NEW_SESSION](#function-new_session) | Function  | Opens a new log session | Session control
+| [SERVER_NEW_SESSION](#function-new_session) | Function  | Opens a new decoupled session | Session control
+| [CLOSE_SESSION](#procedure-close_session) | Procedure | Ends a log session | Session control
 
 All API calls are the same, independent of whether LILA is used 'locally' or in a 'decoupled' manner. One exception is the function `SERVER_NEW_SESSION`, which initializes the LILA package to function as a dedicated client, managing the communication with the LILA server seamlessly. **The parameters and return value of `SERVER_NEW_SESSION` are identical to those of `NEW_SESSION`.**
 
@@ -90,50 +90,6 @@ FUNCTION SERVER_NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToK
 FUNCTION SERVER_NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
 
 ```
----
-### Process Control
-> [!NOTE]
-> Whenever a record in the master table is changed, the last_update field is updated implicitly. This mechanism is designed to support the monitoring features.
-
-#### Setting Values
-
-| Name               | Type      | Description                         | Scope
-| ------------------ | --------- | ----------------------------------- | -------
-| [`SET_PROCESS_STATUS`](#procedure-set_process_status) | Procedure | Sets the state of the log status | Log Session
-| [`SET_STEPS_TODO`](#procedure-set_steps_todo) | Procedure | Sets the required number of actions | Log Session
-| [`SET_STEPS_DONE`](#procedure-set_steps_todo) | Procedure | Sets the number of completed actions | Log Session
-| [`STEP_DONE`](#procedure-step_done) | Procedure | Increments the counter of completed steps | Log Session
-
-#### Querying Values
-
----
-### Logging
-| [`INFO`](#general-logging-procedures) | Procedure | Writes INFO log entry               | Detail Logging
-| [`DEBUG`](#general-logging-procedures) | Procedure | Writes DEBUG log entry              | Detail Logging
-| [`WARN`](#general-logging-procedures) | Procedure | Writes WARN log entry               | Detail Logging
-| [`ERROR`](#general-logging-procedures) | Procedure | Writes ERROR log entry              | Detail Logging
-
----
-### Metrics
-#### Setting Values
-#### Querying Values
-
----
-### Server Control
-
-| [`PROCEDURE IS_ALIVE`](#procedure-is-alive) | Procedure | Excecutes a very simple logging session | Test
-
-
-
-
-
-
-
-
-### Session related Functions and Procedures
-Whenever the record in the *master table* is changed, the value of the field last_update will be updated.
-This mechanism is supports the monitoring features.
-
 
 #### Procedure CLOSE_SESSION
 Ends a logging session with optional final informations. Four function signatures are available for different scenarios.
@@ -142,7 +98,9 @@ Ends a logging session with optional final informations. Four function signature
 
 **Persistence & Error Handling**
 
-Since LILA utilizes high-performance buffering, calling CLOSE_SESSION is essential to ensure that all remaining data is flushed and securely written to the database. To prevent data loss during an unexpected application crash, ensure that CLOSE_SESSION is part of your exception handling:
+> [!IMPORTANT]
+> Since LILA utilizes high-performance buffering, calling CLOSE_SESSION is essential to ensure that all remaining data is flushed and securely written to the database. To prevent data loss during an unexpected application crash, ensure that CLOSE_SESSION is part of your exception handling:
+
 ```sql
 EXCEPTION WHEN OTHERS THEN
     -- Flushes buffered data and logs the error state before terminating
@@ -224,6 +182,52 @@ lila.close_session(gProcessId, 99, 'Problem', 2);
 -- close with additional informations about steps to do and steps done
 lila.close_session(gProcessId, 100, 99, 'Problem', 2);
 ```
+
+
+---
+### Process Control
+> [!NOTE]
+> Whenever a record in the master table is changed, the last_update field is updated implicitly. This mechanism is designed to support the monitoring features.
+
+#### Setting Values
+
+| Name               | Type      | Description                         | Scope
+| ------------------ | --------- | ----------------------------------- | -------
+| [`SET_PROCESS_STATUS`](#procedure-set_process_status) | Procedure | Sets the state of the log status | Log Session
+| [`SET_STEPS_TODO`](#procedure-set_steps_todo) | Procedure | Sets the required number of actions | Log Session
+| [`SET_STEPS_DONE`](#procedure-set_steps_todo) | Procedure | Sets the number of completed actions | Log Session
+| [`STEP_DONE`](#procedure-step_done) | Procedure | Increments the counter of completed steps | Log Session
+
+#### Querying Values
+
+---
+### Logging
+| [`INFO`](#general-logging-procedures) | Procedure | Writes INFO log entry               | Detail Logging
+| [`DEBUG`](#general-logging-procedures) | Procedure | Writes DEBUG log entry              | Detail Logging
+| [`WARN`](#general-logging-procedures) | Procedure | Writes WARN log entry               | Detail Logging
+| [`ERROR`](#general-logging-procedures) | Procedure | Writes ERROR log entry              | Detail Logging
+
+---
+### Metrics
+#### Setting Values
+#### Querying Values
+
+---
+### Server Control
+
+| [`PROCEDURE IS_ALIVE`](#procedure-is-alive) | Procedure | Excecutes a very simple logging session | Test
+
+
+
+
+
+
+
+
+### Session related Functions and Procedures
+Whenever the record in the *master table* is changed, the value of the field last_update will be updated.
+This mechanism is supports the monitoring features.
+
 
 
 #### Procedure SET_PROCESS_STATUS
