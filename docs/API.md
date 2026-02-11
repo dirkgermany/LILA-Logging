@@ -79,36 +79,17 @@ The `NEW_SESSION` resp. `SERVER_NEW_SESSION` function starts the logging session
 Type: NUMBER
 Description: The new process ID; this ID is required for subsequent calls in order to be able to assign the LOG calls to the process
 
-**Syntax and Examples**
+**Syntax**
 ```sql
--- Syntax
----------
 FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
 FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
+FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
+
+FUNCTION SERVER_NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
+FUNCTION SERVER_NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
 FUNCTION SERVER_NEW_SESSION(p_processName VARCHAR2, p_logLevel NUMBER, p_stepsToDo NUMBER, p_daysToKeep NUMBER, p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG')
 
--- Usage
---------
--- Option 1
--- No deletion of old entries, log table name is 'LILA_LOG'
-gProcessId := lila.new_session('my application', lila.logLevelWarn);
--- nearly the same but log table name is 'MY_LOG_TABLE'
-gProcessId := lila.new_session('my application', lila.logLevelWarn, 'MY_LOG_TABLE');
-
--- Option 2
--- keep entries which are not older than 30 days
-gProcessId := lila.new_session('my application', lila.logLevelWarn, 30);
--- use another log table name
-gProcessId := lila.new_session('my application', lila.logLevelWarn, 30, 'MY_LOG_TABLE');
-
--- Option 3
--- with 100 steps to do and 30 days keeping old entries
-gProcessId := lila.new_session('my application', lila.logLevelWarn, 100, 30);
--- the same but dedicated log table
-gProcessId := lila.new_session('my application', lila.logLevelWarn, 100, 30, 'MY_LOG_TABLE');
 ```
-
-
 ---
 ### Process Control
 > [!NOTE]
