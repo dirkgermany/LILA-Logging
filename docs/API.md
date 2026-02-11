@@ -34,13 +34,20 @@ Parameters for procedures and functions can be mandatory, nullable, or optional 
 * <a id="N"> ***N***ullable</a>
 * <a id="D"> ***D***efault</a>
 
+The functions and procedures are organized into the following five groups:
+* Session Handling
+* Process Control
+* Logging
+* Metrics
+* Server Control
+
 ---
 ### Session Handling
 
 | Name               | Type      | Description                         | Scope
 | ------------------ | --------- | ----------------------------------- | -------
-| [NEW_SESSION](#function-new_session) | Function  | Opens a new log session | Session control
-| [SERVER_NEW_SESSION](#function-new_session) | Function  | Opens a new decoupled session | Session control
+| [NEW_SESSION](#function-new_session--server_new_session) | Function  | Opens a new log session | Session control
+| [SERVER_NEW_SESSION](#function-new_session--server_new_session) | Function  | Opens a new decoupled session | Session control
 | [CLOSE_SESSION](#procedure-close_session) | Procedure | Ends a log session | Session control
 
 All API calls are the same, independent of whether LILA is used 'locally' or in a 'decoupled' manner. One exception is the function `SERVER_NEW_SESSION`, which initializes the LILA package to function as a dedicated client, managing the communication with the LILA server seamlessly. **The parameters and return value of `SERVER_NEW_SESSION` are identical to those of `NEW_SESSION`.**
@@ -60,7 +67,7 @@ To accommodate different logging requirements, the following variants are availa
  ```sql
   FUNCTION NEW_SESSION(
     p_processName   VARCHAR2, 
-    p_logLevel      NUMBER, 
+    p_logLevel      PLS_INTEGER, 
     p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG'
   )
  ```
@@ -72,8 +79,8 @@ To accommodate different logging requirements, the following variants are availa
 ```sql
 FUNCTION NEW_SESSION(
   p_processName   VARCHAR2, 
-  p_logLevel      NUMBER, 
-  p_daysToKeep    NUMBER, 
+  p_logLevel      PLS_INTEGER, 
+  p_daysToKeep    PLS_INTEGER, 
   p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG'
 )
  ```
@@ -85,9 +92,9 @@ FUNCTION NEW_SESSION(
 ```sql
 FUNCTION NEW_SESSION(
   p_processName   VARCHAR2, 
-  p_logLevel      NUMBER, 
-  p_stepsToDo     NUMBER, 
-  p_daysToKeep    NUMBER, 
+  p_logLevel      PLS_INTEGER, 
+  p_stepsToDo     PLS_INTEGER, 
+  p_daysToKeep    PLS_INTEGER, 
   p_TabNameMaster VARCHAR2 DEFAULT 'LILA_LOG'
 )
  ```
@@ -98,9 +105,9 @@ FUNCTION NEW_SESSION(
 | Parameter | Type | Description | Required
 | --------- | ---- | ----------- | -------
 | p_processName | VARCHAR2| freely selectable name for identifying the process; is written to *master table* | [`M`](#m)
-| p_logLevel | NUMBER | determines the level of detail in *detail table* (see above) | [`M`](#m)
-| p_stepsToDo | NUMBER | defines how many steps must be done during the process | [`O`](#o)
-| p_daysToKeep | NUMBER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`O`](#o)
+| p_logLevel | PLS_INTEGER | determines the level of detail in *detail table* (see above) | [`M`](#m)
+| p_stepsToDo | PLS_INTEGER | defines how many steps must be done during the process | [`O`](#o)
+| p_daysToKeep | PLS_INTEGER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`O`](#o)
 | p_TabNameMaster | VARCHAR2 | optional prefix of the LOG table names (see above) | [`D`](#d)
 
 **Returns**
@@ -116,16 +123,78 @@ BEGIN
   v_processId := NEW_SESSION('DATA_IMPORT', 2, 30);
 END;
 
+```
 
 #### Procedure CLOSE_SESSION
 Ends a logging session with optional final informations. Four function signatures are available for different scenarios.
-* Option 1 is a simple close without any additional information about the process.
-* Option 2-4 allows adding various informations to the ending process.
 
-**Persistence & Error Handling**
+**Signatures**
+
+<details>
+  <summary><b>1. No information about process</b> (Standard)</summary>
+  
+ ```sql
+  PROCEDURE CLOSE_SESSION(
+    p_processId     NUMBER
+  )
+ ```
+</details>
+
+<details>
+  <summary><b>2. Update process info and process status</b> (Standard)</summary>
+  
+ ```sql
+  PROCEDURE CLOSE_SESSION(
+    p_processId     NUMBER,
+    p_processInfo   VARCHAR2,
+    p_processStatus PLS_INTEGER
+  )
+ ```
+</details>
+
+<details>
+  <summary><b>3. Update process info and metric results</b> (Standard)</summary>
+  
+ ```sql
+  PROCEDURE CLOSE_SESSION(
+    p_processId     NUMBER,
+    p_stepsDone     PLS_INTEGER,
+    p_processInfo   VARCHAR2,
+    p_processStatus PLS_INTEGER
+  )
+ ```
+</details>
+
+<details>
+  <summary><b>4. Update complete process data and complete metric data</b> (Standard)</summary>
+  
+ ```sql
+  PROCEDURE CLOSE_SESSION(
+    p_processId     NUMBER,
+    p_stepsToDo     PLS_INTEGER,
+    p_stepsDone     PLS_INTEGER,
+    p_processInfo   VARCHAR2,
+    p_processStatus PLS_INTEGER
+  )
+ ```
+</details>
+
+
+**Parameters**
+
+
+| Parameter | Type | Description | Required
+| --------- | ---- | ----------- | -------
+| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
+| p_stepsToDo | PLS_INTEGER | Number of work steps that would have been necessary for complete processing. This value must be managed by the calling package | [`N`](#n)
+| p_stepsDone | PLS_INTEGER | Number of work steps that were actually processed. This value must be managed by the calling package | [`N`](#n)
+| p_processInfo | VARCHAR2 | Final information about the process (e.g., a readable status) | [`N`](#n)
+| p_status | PLS_INTEGER | Final status of the process (freely selected by the calling package) | [`N`](#n)
+
 
 > [!IMPORTANT]
 > Since LILA utilizes high-performance buffering, calling CLOSE_SESSION is essential to ensure that all remaining data is flushed and securely written to the database. To prevent data loss during an unexpected application crash, ensure that CLOSE_SESSION is part of your exception handling:
+
 
 ```sql
 EXCEPTION WHEN OTHERS THEN
@@ -138,82 +207,8 @@ EXCEPTION WHEN OTHERS THEN
     RAISE;
 ```
 
-*Option 1*
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-
-\
-*Option 2*
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-| p_processInfo | VARCHAR2 | Final information about the process (e.g., a readable status) | [`N`](#n)
-| p_status | NUMBER | Final status of the process (freely selected by the calling package) | [`N`](#n)
-
-\
-*Option 3*
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-| p_stepsDone | NUMBER | Number of work steps that were actually processed. This value must be managed by the calling package | [`N`](#n)
-| p_processInfo | VARCHAR2 | Final information about the process (e.g., a readable status) | [`N`](#n)
-| p_status | NUMBER | Final status of the process (freely selected by the calling package) | [`N`](#n)
-
-\
-*Option 4*
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-| p_stepsToDo | NUMBER | Number of work steps that would have been necessary for complete processing. This value must be managed by the calling package | [`N`](#n)
-| p_stepsDone | NUMBER | Number of work steps that were actually processed. This value must be managed by the calling package | [`N`](#n)
-| p_processInfo | VARCHAR2 | Final information about the process (e.g., a readable status) | [`N`](#n)
-| p_status | NUMBER | Final status of the process (freely selected by the calling package) | [`N`](#n)
-
-\
-**Syntax and Examples**
-```sql
--- Syntax
----------
--- Option 1
-PROCEDURE CLOSE_SESSION(p_processId NUMBER)
--- Option 2
-PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_processInfo VARCHAR2, p_status NUMBER)
--- Option 3
-PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_stepsDone NUMBER, p_processInfo VARCHAR2, p_status NUMBER)
--- Option 4
-PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_stepsToDo NUMBER, p_stepsDone NUMBER, p_processInfo VARCHAR2, p_status NUMBER)
-
-
--- Usage
---------
--- assuming that gProcessId is the global stored process ID
-
--- Option 1
--- close without any information (e.g. when be set with SET_PROCESS_STATUS before)
-lila.close_session(gProcessId);
-
-\
--- Option 2
--- close with information about process status
-lila.close_session(gProcessId, 'Success', 1);
-
-\
--- Option 3
--- close includes number of steps done
-lila.close_session(gProcessId, 99, 'Problem', 2);
-
-\
--- Option 4
--- close with additional informations about steps to do and steps done
-lila.close_session(gProcessId, 100, 99, 'Problem', 2);
-```
-
-
 ---
 ### Process Control
-> [!NOTE]
-> Whenever a record in the master table is changed, the last_update field is updated implicitly. This mechanism is designed to support the monitoring features.
 
 #### Setting Values
 
@@ -224,7 +219,11 @@ lila.close_session(gProcessId, 100, 99, 'Problem', 2);
 | [`SET_STEPS_DONE`](#procedure-set_steps_todo) | Procedure | Sets the number of completed actions | Log Session
 | [`STEP_DONE`](#procedure-step_done) | Procedure | Increments the counter of completed steps | Log Session
 
+> [!NOTE]
+> Whenever a record in the master table is changed, the last_update field is updated implicitly. This mechanism is designed to support the monitoring features.
+
 #### Querying Values
+
 
 ---
 ### Logging
@@ -232,6 +231,7 @@ lila.close_session(gProcessId, 100, 99, 'Problem', 2);
 | [`DEBUG`](#general-logging-procedures) | Procedure | Writes DEBUG log entry              | Detail Logging
 | [`WARN`](#general-logging-procedures) | Procedure | Writes WARN log entry               | Detail Logging
 | [`ERROR`](#general-logging-procedures) | Procedure | Writes ERROR log entry              | Detail Logging
+
 
 ---
 ### Metrics
