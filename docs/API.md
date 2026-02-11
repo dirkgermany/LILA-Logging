@@ -461,13 +461,17 @@ Writes a log entry with severity DEBUG. By default, LILA operates 'silently,' me
 | Name               | Type      | Description                         | Scope
 | ------------------ | --------- | ----------------------------------- | -------
 | [`MARK_STEP`](#procedure-mark_step) | Procedure | Sets a metric action | Metrics
-| [`SET_STEPS_TODO`](#procedure-set_steps_todo) | Procedure | Sets the required number of actions | Metrics
-| [`STEP_DONE`](#procedure-step_done) | Procedure | Increments the counter of completed steps | Metrics
-| [`SET_STEPS_DONE`](#procedure-set_steps_todo) | Procedure | Sets the number of completed actions | Metrics
-| [`GET_PROC_STEPS_DONE`](fFunction-get_proc_steps_done) | FUNCTION | Returns number of already finished steps | Metrics
+| [`GET_METRIC_AVG_DURATION`](#function-get_metric_avg_duration) | Function | Returns average action time | Metrics
+| [`GET_METRIC_STEPS`](#function-get_metric_steps) | Function | Returns the counter of action steps | Metrics
 
-#### Setting Values
-#### PROCEDURE MARK_STEP
+
+    FUNCTION GET_METRIC_AVG_DURATION(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER;
+    FUNCTION GET_METRIC_STEPS(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER;
+
+
+**Procedures (Setter)**
+
+#### Procedure MARK_STEP
 Reports a completed work step, which typically represents an intermediate stage in the process lifecycle. For this reason, markers must not be confused with the actual process steps.
 The MARK_STEP procedure reports a completed work step. Markers are distinguished by the `p_actionName` parameter. A process can contain any number of action names, enabling highly granular monitoring.
 With every marker report, LILA calculates:
@@ -484,7 +488,37 @@ With every marker report, LILA calculates:
   )
  ```
 
-#### Querying Values
+**Functions (Getter)**
+
+#### Function GET_METRIC_AVG_DURATION
+Returns the average duration of markers, aggregated by their respective action names.
+
+ ```sql
+  FUNCTION GET_METRIC_AVG_DURATION(
+    p_processId     NUMBER,
+    p_actionName    VARCHAR2
+  )
+ ```
+
+**Functions (Getter)**
+
+#### Function GET_METRIC_STEPS
+Returns the number of markers, grouped by their respective action names.
+
+ ```sql
+  FUNCTION GET_METRIC_STEPS(
+    p_processId     NUMBER,
+    p_actionName    VARCHAR2
+  )
+ ```
+
+**Parameters**
+
+| Parameter | Type | Description | Required
+| --------- | ---- | ----------- | -------
+| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
+| p_actionName | VARCHAR2 | the log text | [`M`](#m)
+
 
 ---
 ### Server Control
