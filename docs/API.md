@@ -1,11 +1,11 @@
 # LILA API Reference
 
 <details>
-<summary>📖<b>Content</summary>b></summary>
+<summary>📖<b>Content</b></summary>
 
 - [Quick Start](#quick-start)
 - [Functions and Procedures](#functions-and-procedures)
-  - [Session related Functions and Procedures](#session-related-functions-and-procedures)
+  - [Session handling](#session-handling)
     - [Function NEW_SESSION](#function-new_session--server_new_session)
     - [Procedure CLOSE_SESSION](#procedure-close_session)
     - [Procedure SET_PROCESS_STATUS](#procedure-set_process_status)
