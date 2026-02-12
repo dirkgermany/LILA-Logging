@@ -3,6 +3,7 @@
 <details>
 <summary>📖<b>Content</summary>b></summary>
 
+- [Quick Start](#quick-start)
 - [Functions and Procedures](#functions-and-procedures)
   - [Session related Functions and Procedures](#session-related-functions-and-procedures)
     - [Function NEW_SESSION](#function-new_session--server_new_session)
@@ -47,6 +48,41 @@
 
 > [!TIP]
 > This document serves as the LILA API reference, providing a straightforward description of the programming interface. For those new to LILA, I recommend starting with the document ["architecture and concepts.md"](docs/architecture-and-concepts.md), which (hopefully) provides a fundamental understanding of how LILA works. Furthermore, the demos and examples in the #demo folder demonstrate how easily the LILA API can be integrated.
+
+---
+## Quick Start
+The following example shows the simplest way to initialize a session and log a message. 
+LILA uses reasonable defaults, so you only need to provide a process name.
+After your application ends there should be two tables:
+* LILA_LOG (the master logging table)
+* LILA_LOG_DETAILS (the detail table with logs and metrics)
+
+In LILA_LOG should be stored your first process 'MY_FIRST_SYNC' and in the LILA_LOG_DETAILS should be your first metric markers.
+
+
+```sql
+DECLARE
+  l_processId    NUMBER;
+  l_sessionInit  t_session_init;
+BEGIN
+  -- 1. Setup minimal configuration
+  l_sessionInit.processName := 'MY_FIRST_SYNC';
+  l_sessionInit.logLevel    := logLevelInfo;     -- default is logLevelMonitorr
+  
+  -- 2. Initialize the session
+  l_processId := lila.new_session(p_sessionInit => l_sessionInit);
+  
+  -- 3. Start logging
+  lila.info(p_processId => l_processId, p_info => 'LILA is up and running!');
+  
+  -- 4. Mark a work step
+  lila.mark_step(p_processId => l_processId, p_actionName => 'DATA_LOAD');
+  dbms_session.sleep(1);
+  lila.mark_step(p_processId => l_processId, p_actionName => 'DATA_LOAD');
+  
+  COMMIT;
+END;
+```
 
 ---
 ## Functions and Procedures
@@ -638,7 +674,7 @@ logLevelDebug   constant number := 8;
 ```sql
 TYPE t_session_init IS RECORD (
     processName VARCHAR2(100),
-    logLevel PLS_INTEGER,
+    logLevel PLS_INTEGER := logLevelMonitor,
     stepsToDo PLS_INTEGER,
     daysToKeep PLS_INTEGER,
     tabNameMaster VARCHAR2(100) DEFAULT 'LILA_LOG'
