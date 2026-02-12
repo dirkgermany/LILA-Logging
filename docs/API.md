@@ -633,7 +633,7 @@ TYPE t_session_init IS RECORD (
 );
 ```
 
-#### Record Type t_process_rec
+### Record Type t_process_rec
 Usefull for getting a complete set of all process data. Using this record avoids multiple individual API calls.
 
 ```sql
