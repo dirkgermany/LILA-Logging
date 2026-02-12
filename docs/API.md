@@ -48,7 +48,7 @@
 
 > [!TIP]
 > This document serves as the LILA API reference, providing a straightforward description of the programming interface.
-> For those new to LILA, I recommend starting with the document [architecture and concepts.md](architecture-and-concepts.md), which (hopefully) provides a fundamental understanding of how LILA works. Furthermore, the demos and examples in the #demo folder demonstrate how easily the LILA API can be integrated.
+> For those new to LILA, I recommend starting with the document [architecture and concepts.md](architecture%20and%20concepts.md), which (hopefully) provides a fundamental understanding of how LILA works. Furthermore, the demos and examples in the #demo folder demonstrate how easily the LILA API can be integrated.
 
 ---
 ## Quick Start
