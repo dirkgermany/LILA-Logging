@@ -120,7 +120,7 @@ BEGIN
   l_sessionInit.logLevel    := logLevelInfo;     -- default is logLevelMonitorr
   
   -- 2. Initialize the session
-  -- Use `SERVER_NEW_SESSION` instead of NEW_SESSION to connect to a LILA server.
+  -- Use SERVER_NEW_SESSION instead of NEW_SESSION to connect to a LILA server.
   -- LILA now acts as a dedicated client, handling communication in the background.
   l_processId := lila.server_new_session(p_sessionInit => l_sessionInit);
   
