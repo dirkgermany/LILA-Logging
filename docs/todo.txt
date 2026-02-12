@@ -7,6 +7,10 @@
 ## Code Optimierung
 * Generalisierung der Nachrichten durch eine Methode, die die Elemente header, meta, payload strukturiert und den Zusammenbau vereinfacht
 
+## Purge
+* Interval wird aktuell mit keep_days mitgeteilt. Okay. Mit einem speziellen Kommando setSessionImmortal oder Parameter bei NEW_SESSION .immortal = 1 wird das in der Master-Tabelle vermerkt. Bei einem Purge-Lauf werden alle Einträge zur Session nicht gelöscht.
+* Das Kommando sollte jederzeit auch für bereits beendete Sessions abgesetzt werden können. Also nicht NEW_SESSION...
+
 ## Performance
 * dynamische create index sind noch fehlerhaft und werden nicht auf alle Tabellen angewandt
 * Indexes grundsätzlich prüfen
