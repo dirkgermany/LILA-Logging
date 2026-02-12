@@ -47,7 +47,7 @@ LILA_VERSION constant varchar2(20) := 'v1.3.0';
 
     TYPE t_session_init IS RECORD (
         processName VARCHAR2(100),
-        logLevel PLS_INTEGER,
+        logLevel PLS_INTEGER := logLevelMonitor,
         proc_stepsToDo PLS_INTEGER,
         daysToKeep PLS_INTEGER,
         tab_name_master VARCHAR2(100) DEFAULT 'LILA_LOG'
