@@ -43,29 +43,71 @@ LILA is developed by a developer who hates over-engineered tools. Focus: 5 minut
 8. **Future Ready**: Built for the latest Oracle 26ai (2026), and fully tested with existing 19c environment
 9. **Small Footprint**:  ~3k lines of logical PL/SQL code ensures simple quality and security control, fast compilation, zero bloat and minimal Shared Pool utilization (reducing memory pressure and fragmentation)
 
+---
+
+## Architecture at a Glance
+
 ```mermaid
-graph TD
-    subgraph "Application Environment"
-        App[Your PL/SQL App] --> API[Lila API]
+
+graph LR
+    subgraph ODB ["Oracle Database Instance"]
+        
+        subgraph APP ["Application Context"]
+            direction TB
+            AppA[App Team A]
+            AppB[App Team B]
+            AppA & AppB --> API[Lila API]
+        end
+
+        %% -- VERARBEITUNG --
+        subgraph MODES ["Processing Modes"]
+            direction TB
+            subgraph INSIDE ["LILA-Inside Mode"]
+                LI[Lila Inside Instance]
+            end
+            
+            subgraph DECOUPLED ["LILA-Decoupled Mode"]
+                CNS[Decoupled Session] -.-> SRV[Lila Server Instance]
+            end
+        end
+
+        %% -- TABELLEN-STRUKTUR --
+        MDBA[(Lila Tables Team A)]
+        MDBS[(Lila Common Repository)]
+        MDBB[(Lila Tables Team B)]
     end
 
-    subgraph "Lila Communication Modes"
-        API -->|Local Mode| DB[(Local Oracle DB)]
-        API -->|Decoupled Mode| CNS[SERVER_NEW_SESSION]
+    %% API Verbindungen
+    API -->|NEW_SESSION| LI
+    API -->|SERVER_NEW_SESSION| CNS
+    
+    %% Datenfluss zu den Tabellen (Linienführung optimiert)
+    LI -->|Direct Write| MDBA
+    LI -.-> MDBS
+    
+    SRV -.-> MDBS
+    SRV -->|Deferred Write| MDBB
+
+    subgraph MON_UI ["Analysis & Visibility"]
+        UI[Monitoring UI / Dashboard]
     end
 
-    subgraph "Remote Monitoring"
-        CNS -.->|Implicit & Seamless| SRV[Lila Server]
-        SRV -->|Storage| MDB[(Master Table)]
-        SRV -->|Analysis| MON[Monitoring UI / Dashboard]
-    end
+    %% Monitoring-Anbindung
+    MDBA & MDBS & MDBB -.-> UI
 
-    %% Styles for a professional Lila-Look
-    style App fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    style SRV fill:#ce93d8,stroke:#4a148c,stroke-width:2px
+    %% Styles
+    style AppA fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style AppB fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     style API fill:#e1f5fe,stroke:#01579b,stroke-width:2px
-    style MDB fill:#f3e5f5,stroke:#7b1fa2
+    style LI fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style SRV fill:#ce93d8,stroke:#4a148c,stroke-width:2px
+    style CNS fill:#fff3e0,stroke:#ff9800,stroke-dasharray: 5 5
+    style MDBA fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style MDBB fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style MDBS fill:#fff9c4,stroke:#fbc02d,stroke-width:2px
+    style ODB fill:#fafafa,stroke:#333,stroke-width:1px
 
+```
 
 ---
 ## Fast integration
@@ -76,28 +118,8 @@ graph TD
 >LILA comes ready to test right out of the box, so no custom implementation or coding is required to see the framework in action immediately after setup.
 >Also please have a look to the sample applications 'learn_lila': https://github.com/dirkgermany/LILA-Logging/tree/main/demo/first_steps.
 
-graph TD
-    subgraph "Application Environment"
-        App[Your PL/SQL App] --> API[LILA API]
-    end
-
-    subgraph "LILA Communication Modes"
-        API -->|Local Mode| DB[(Local Oracle DB)]
-        API -->|Decoupled Mode| CNS[SERVER_NEW_SESSION]
-    end
-
-    subgraph "Remote Monitoring"
-        CNS -.->|Implicit & Seamless| SRV[LILA Server]
-        SRV -->|Storage| MDB[(Master Table)]
-        SRV -->|Analysis| MON[Monitoring UI / Dashboard]
-    end
-
-    style App fill:#f9f,stroke:#333,stroke-width:2px
-    style SRV fill:#bbf,stroke:#333,stroke-width:2px
-    style API fill:#dfd,stroke:#333
-
-
 ---
+
 ## Advantages
 The following points complement the **Key Features** and provide a deeper insight into the architectural decisions and technical innovations of LILA.
 
