@@ -61,11 +61,11 @@ The process knows actions 'A' and 'B'. Action 'A' is reported several times, act
 ## Operating Modes
 LILA features two operating modes that applications can use. It is possible to address these modes in parallel from within an application—I call this 'hybrid usage.'
 
-### Inside
-This form of integration is likely the standard when it comes to incorporating PL/SQL packages. The 'other' package extends the functional scope of the caller; the program flow is **synchronous**, meaning the control flow leaves the calling package, continues in the called package, and then returns. In Inside mode, LILA is exclusively available to the application.
+### In-Session
+This form of integration is likely the standard when it comes to incorporating PL/SQL packages. The 'other' package extends the functional scope of the caller; the program flow is **synchronous**, meaning the control flow leaves the calling package, continues in the called package, and then returns. In In-Session mode, LILA is exclusively available to the application.
 
 ### Decoupled
-The opposite of synchronous execution in Inside mode is the **asynchronous** Decoupled mode.
+The opposite of synchronous execution in In-Session mode is the **asynchronous** Decoupled mode.
 
 In this mode, LILA functions as a **LILA Server**, which writes status changes, logs, and metrics into the log tables independently of the calling program—the **LILA Client**. Using 'Fire & Forget' via pipes, the LILA Client can deliver large amounts of data in a very short time without being slowed down itself.
 
