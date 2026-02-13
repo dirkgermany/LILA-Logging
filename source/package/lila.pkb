@@ -1,6 +1,6 @@
-    CREATE OR REPLACE PACKAGE BODY LILA AS
+    CREATE OR REPLACE PACKAGE BODY LILAM AS
     /*
-     * LILA-Logging
+     * LILAM
      * Dual-licensed under GPLv3 or Commercial License.
      * See LICENSE or LICENSE_ENTERPRISE for details.
      */
@@ -31,7 +31,7 @@
         C_PARAM_MASTER_TABLE              CONSTANT varchar2(20) := 'PH_MASTER_TABLE';
         C_PARAM_DETAIL_TABLE              CONSTANT varchar2(20) := 'PH_DETAIL_TABLE';
         C_SUFFIX_DETAIL_NAME              CONSTANT varchar2(16) := '_DETAIL';
-        C_LILA_SERVER_REGISTRY            CONSTANT VARCHAR2(20) := 'LILA_SERVER_REGISTRY';
+        C_LILAM_SERVER_REGISTRY            CONSTANT VARCHAR2(20) := 'LILAM_SERVER_REGISTRY';
       
         ---------------------------------------------------------------
         -- Other general Parameters
@@ -238,7 +238,7 @@
         as
         begin
      
-        return 'LILA->' || SYS_CONTEXT('USERENV', 'SID') || '-' || TO_CHAR(
+        return 'LILAM->' || SYS_CONTEXT('USERENV', 'SID') || '-' || TO_CHAR(
             (EXTRACT(DAY FROM (sys_extract_utc(SYSTIMESTAMP) - TO_TIMESTAMP('1970-01-01', 'YYYY-MM-DD'))) * 86400000) + 
             TO_NUMBER(TO_CHAR(sys_extract_utc(SYSTIMESTAMP), 'SSSSSFF3')),
             'FM999999999999999'
@@ -261,7 +261,7 @@
             
             l_serverPipe := getServerPipeAvailable;
             if l_serverPipe is null then 
-                RAISE_APPLICATION_ERROR(-20004, 'LILA: Kein aktiver Server gefunden.');
+                RAISE_APPLICATION_ERROR(-20004, 'LILAM: Kein aktiver Server gefunden.');
             end if;
             g_client_pipes(l_key) := l_serverPipe;
             return g_client_pipes(l_key);
@@ -325,7 +325,7 @@
             l_counter PLS_INTEGER;
             l_sqlStmt varchar2(200);
         begin
-            l_sqlStmt := 'SELECT count(*) FROM ' || C_LILA_SERVER_REGISTRY || ' WHERE is_active = 1 and pipe_name = :1';
+            l_sqlStmt := 'SELECT count(*) FROM ' || C_LILAM_SERVER_REGISTRY || ' WHERE is_active = 1 and pipe_name = :1';
             execute immediate l_sqlStmt into l_counter using p_pipeName;
             if l_counter >= 1 then return TRUE; end if;
             if l_counter = 0  then return FALSE; end if;
@@ -343,7 +343,7 @@
             
             l_sqlStmt := '
             SELECT pipe_name 
-            FROM ' || C_LILA_SERVER_REGISTRY || ' 
+            FROM ' || C_LILAM_SERVER_REGISTRY || ' 
             WHERE is_active = 1 
               AND last_activity > SYSTIMESTAMP - INTERVAL ''5'' SECOND 
             ORDER BY current_load ASC, last_activity DESC 
@@ -448,7 +448,7 @@
                 -- ich bin ein Client und kann keine Nachricht in die Pipe schreiben
                 -- Neuanmeldung an alternativem Server
                 DBMS_PIPE.RESET_BUFFER;
-                RAISE_APPLICATION_ERROR(-20006, 'LILA: Client kann keine Nachrichten an Server senden:  ' || sqlErrM);
+                RAISE_APPLICATION_ERROR(-20006, 'LILAM: Client kann keine Nachrichten an Server senden:  ' || sqlErrM);
             end if;
                         
         exception
@@ -532,8 +532,8 @@
         as
             sqlStmt varchar2(4000);
         begin
-            if not objectExists('SEQ_LILA_LOG', 'SEQUENCE') then
-                sqlStmt := 'CREATE SEQUENCE SEQ_LILA_LOG MINVALUE 0 MAXVALUE 9999999999999999999999999999 INCREMENT BY 1 START WITH 1 CACHE 10 NOORDER  NOCYCLE  NOKEEP  NOSCALE  GLOBAL';
+            if not objectExists('SEQ_LILAM_LOG', 'SEQUENCE') then
+                sqlStmt := 'CREATE SEQUENCE SEQ_LILAM_LOG MINVALUE 0 MAXVALUE 9999999999999999999999999999 INCREMENT BY 1 START WITH 1 CACHE 10 NOORDER  NOCYCLE  NOKEEP  NOSCALE  GLOBAL';
                 execute immediate sqlStmt;
             end if ;
                     
@@ -581,9 +581,9 @@
                 run_sql(sqlStmt);
             end if ;
     
-            if not objectExists('LILA_PIPE_REGISTRY', 'TABLE') then
+            if not objectExists('LILAM_PIPE_REGISTRY', 'TABLE') then
                 sqlStmt := '
-                CREATE TABLE ' || C_LILA_SERVER_REGISTRY || ' (
+                CREATE TABLE ' || C_LILAM_SERVER_REGISTRY || ' (
                     pipe_name      VARCHAR2(30) PRIMARY KEY,
                     last_activity  TIMESTAMP,
                     current_load   NUMBER,
@@ -2315,7 +2315,7 @@
         end;
     
         
-        FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2 default 'LILA_LOG') return number
+        FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2 default 'LILAM_LOG') return number
         as
             p_session_init t_session_init;
         begin
@@ -2331,7 +2331,7 @@
     
         --------------------------------------------------------------------------
     
-        function NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_tabNameMaster varchar2 default 'LILA_LOG') return number
+        function NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_tabNameMaster varchar2 default 'LILAM_LOG') return number
         as
             p_session_init t_session_init;
         begin
@@ -2348,7 +2348,7 @@
         -- Opens/starts a new logging session.
         -- The returned process id must be stored within the calling procedure because it is the reference
         -- which is recommended for all following actions (e.g. CLOSE_SESSION, DEBUG, SET_PROCESS_STATUS).
-        function NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_daysToKeep number, p_tabNameMaster varchar2 default 'LILA_LOG') return number
+        function NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_daysToKeep number, p_tabNameMaster varchar2 default 'LILAM_LOG') return number
         as
             p_session_init t_session_init;
         begin
@@ -2501,7 +2501,7 @@
             l_status      := extractFromJsonNum(l_payload, 'process_status');
             
             l_header := '"header":{"msg_type":"SERVER_RESPONSE"}';
-            l_meta   := '"meta":{"server_version":"' || LILA_VERSION || '"}';
+            l_meta   := '"meta":{"server_version":"' || LILAM_VERSION || '"}';
             l_data   := '"payload":{"server_message":"' || TXT_ACK_OK || '","server_code": ' || get_serverCode(TXT_ACK_OK);
             l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
     
@@ -2528,7 +2528,7 @@
             l_msg    varchar2(500);
         begin
             l_header := '"header":{"msg_type":"SERVER_RESPONSE"}';
-            l_meta   := '"meta":{"server_version":"' || LILA_VERSION || '"}';
+            l_meta   := '"meta":{"server_version":"' || LILAM_VERSION || '"}';
             l_data   := '"payload":{"server_message":"' || TXT_PING_ECHO || '","server_code":' || get_serverCode(TXT_PING_ECHO);
             l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
     
@@ -2574,7 +2574,7 @@
             into l_payload from dual;   
                         
             l_header := '"header":{"msg_type":"SERVER_RESPONSE"}';
-            l_meta   := '"meta":{"server_version":"' || LILA_VERSION || '", "server_message":"' || TXT_DATA_ANSWER || '","server_code":' || get_serverCode(TXT_DATA_ANSWER) || '}';
+            l_meta   := '"meta":{"server_version":"' || LILAM_VERSION || '", "server_message":"' || TXT_DATA_ANSWER || '","server_code":' || get_serverCode(TXT_DATA_ANSWER) || '}';
             l_payload := '"payload":' || l_payload;
             l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_payload || '}';
              
@@ -2601,7 +2601,7 @@
             l_msg    varchar2(500);
         begin
             l_header := '"header":{"msg_type":"SERVER_RESPONSE"}';
-            l_meta   := '"meta":{"server_version":"' || LILA_VERSION || '"}';
+            l_meta   := '"meta":{"server_version":"' || LILAM_VERSION || '"}';
             l_data   := '"payload":{"server_message":"' || TXT_ACK_OK || '","server_code":' || get_serverCode(TXT_ACK_OK);
             l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
     
@@ -2774,7 +2774,7 @@
                 v_key := g_monitor_groups.NEXT(v_key);
             END LOOP;
         
-            DBMS_OUTPUT.PUT_LINE('--- LILA BUFFER DIAGNOSE ---');
+            DBMS_OUTPUT.PUT_LINE('--- LILAM BUFFER DIAGNOSE ---');
             DBMS_OUTPUT.PUT_LINE('Sessions in Queue: ' || g_dirty_queue.COUNT);
             DBMS_OUTPUT.PUT_LINE('Gepufferte Logs:   ' || v_log_total);
             DBMS_OUTPUT.PUT_LINE('Gepufferte Monit.: ' || v_mon_total);
@@ -2798,7 +2798,7 @@
             l_password   := extractFromJsonStr(l_payload, 'shutdown_password');
             
             l_header := '"header":{"msg_type":"SERVER_RESPONSE"}';
-            l_meta   := '"meta":{"server_version":"' || LILA_VERSION || '"}';
+            l_meta   := '"meta":{"server_version":"' || LILAM_VERSION || '"}';
     
             if l_password = g_shutdownPassword then            
                 l_data   := '"payload":{"server_message":"' || TXT_ACK_SHUTDOWN || '","server_code": ' || get_serverCode(TXT_ACK_SHUTDOWN);
@@ -2831,14 +2831,14 @@
         BEGIN
             -- 1. WICHTIG: Erst schauen, was draußen wirklich los ist!
             -- Aktualisiert g_pipe_pool(i).is_active via Ping/Antwort
-            l_job_name := 'LILA_SRV_SLOT_' || l_slot_idx;
+            l_job_name := 'LILAM_SRV_SLOT_' || l_slot_idx;
             
                 -- 2. Sicherstellen, dass kein "Leichen"-Job existiert
             BEGIN
                 DBMS_SCHEDULER.DROP_JOB(l_job_name, force => TRUE);
             EXCEPTION WHEN OTHERS THEN NULL; END;
         
-            l_action := q'[BEGIN LILA.START_SERVER(p_pipeName => ']' 
+            l_action := q'[BEGIN LILAM.START_SERVER(p_pipeName => ']' 
                         || l_pipe 
                         || q'[', p_password => ']' 
                         || p_password 
@@ -2852,10 +2852,10 @@
                 job_action => l_action,
                 enabled    => TRUE,
                 auto_drop  => TRUE,
-                comments   => 'LILA Background Worker für Pipe ' || l_pipe
+                comments   => 'LILAM Background Worker für Pipe ' || l_pipe
             );
                 
-            RETURN 'LILA-Server Pipe = ' || l_pipe;
+            RETURN 'LILAM-Server Pipe = ' || l_pipe;
         END;
         
         --------------------------------------------------------------------------
@@ -2867,11 +2867,11 @@
         begin
             -- alten Eintrag erstmal raus
             sqlStmt := '
-            delete from ' || C_LILA_SERVER_REGISTRY || ' where pipe_name = :1';
+            delete from ' || C_LILAM_SERVER_REGISTRY || ' where pipe_name = :1';
             execute immediate sqlStmt using g_serverPipeName;
             
             sqlStmt := '
-            insert into ' || C_LILA_SERVER_REGISTRY || ' (
+            insert into ' || C_LILAM_SERVER_REGISTRY || ' (
                 pipe_name,
                 last_activity,
                 is_active,
@@ -2905,7 +2905,7 @@
             end case;
             
             l_sqlStmt := '
-            UPDATE ' || C_LILA_SERVER_REGISTRY || '
+            UPDATE ' || C_LILAM_SERVER_REGISTRY || '
             SET last_activity = SYSTIMESTAMP, 
                 is_active = :1,
                 current_load = (SELECT pipe_size FROM v$db_pipes WHERE name = :2)
@@ -2982,7 +2982,7 @@
         begin
             g_shutdownPassword := p_password;
             g_serverPipeName := l_pipe;
-            g_serverProcessId := new_session('LILA_REMOTE_SERVER', logLevelDebug);
+            g_serverProcessId := new_session('LILAM_REMOTE_SERVER', logLevelDebug);
             registerServerPipe;
             preparePipe(g_serverPipeName);
 
@@ -3143,9 +3143,9 @@
         as
             pProcessName number(19,0);
         begin
-            pProcessName := new_session('LILA Life Check', logLevelDebug);
-            debug(pProcessName, 'First Message of LILA');
+            pProcessName := new_session('LILAM Life Check', logLevelDebug);
+            debug(pProcessName, 'First Message of LILAM');
             close_session(pProcessName, 1, 1, 'OK', 1);
         end;
     
-    END LILA;
+    END LILAM;
