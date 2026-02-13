@@ -638,6 +638,14 @@ create or replace PACKAGE BODY LILAM AS
                 run_sql(sqlStmt);
             end if ;
     
+           if not objectExists('idx_lilam_registry_group', 'INDEX') then
+                sqlStmt := '
+                CREATE INDEX idx_lilam_registry_group 
+                ON C_LILAM_SERVER_REGISTRY (group_name, is_active, current_load)';
+                sqlStmt := replace(sqlStmt, 'C_LILAM_SERVER_REGISTRY', C_LILAM_SERVER_REGISTRY);
+                run_sql(sqlStmt);
+            end if ;
+    
         exception      
             when others then
                 -- creating log files mustn't fail
