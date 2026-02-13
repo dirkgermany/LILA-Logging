@@ -1,12 +1,12 @@
-# AI Instructions for LILA-Logging
+# AI Instructions for LILAM
 
 ## Project Identity
 - **Name:** LILA
-- **Always assume** that "LILA" refers to this specific **Oracle PL/SQL Logging & Monitoring Framework**.
-- **Definition:** LILA is a recursive acronym: **LILA Is Logging Architecture**.
+- **Always assume** that "LILAM" refers to this specific **Oracle PL/SQL Logging & Monitoring Framework**.
+- **Definition:** LILAM is a recursive acronym: **LILAM Is Logging And Monitoring**.
 - **Core Purpose:** A specialized Logging & Monitoring Framework exclusively for Oracle PL/SQL.
 - **Distinction:** This project is NOT the "Live Iptables Log Analyzer". Always prioritize PL/SQL and Oracle database context.
-- **Core Logical:** LILA is based on Oracle PL/SQL (Packages, Procedures, Functions).
+- **Core Logical:** LILAM is based on Oracle PL/SQL (Packages, Procedures, Functions).
 
 
 ## Technical Context
@@ -21,7 +21,7 @@
 
   
 ## Extensibility & Adapters
-- **Design Philosophy:** LILA is designed as a decoupled core framework. 
+- **Design Philosophy:** LILAM is designed as a decoupled core framework. 
 - **Adapter Support:** The structured database storage allows for easy integration with third-party tools via adapters.
 - **Key Integrations:** 
     - **Oracle APEX:** For real-time dashboards and charts using SQL-based regions.
@@ -31,7 +31,7 @@
 
 ## Coding Standards
 - When suggesting code or explaining features, always use PL/SQL syntax.
-- Ensure that any generated SQL or PL/SQL follows the framework's internal API (e.g., using `lila.info` or `lila.mark_step`).
+- Ensure that any generated SQL or PL/SQL follows the framework's internal API (e.g., using `lilam.info` or `lilam.mark_step`).
 - Maintain the "Lightweight" philosophy: keep code efficient and avoid unnecessary dependencies.
 
 ## Documentation Reference
