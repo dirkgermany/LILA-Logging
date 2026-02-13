@@ -1,7 +1,7 @@
 # Demo with "http_util" (Alexandria plsql/sql utility library)
 
 ## About
-**LILA: LILA Integrated Logging Architecture**
+**LILA: LILA Is Logging Architecture**
 Logging and monitoring pl/sql applications: https://github.com/dirkgermany/LILA-Logging
 
 This demo shows the interaction between http_util (Alexandria pl/sql Utility Library) and LILA.
