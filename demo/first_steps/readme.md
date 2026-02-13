@@ -1,7 +1,7 @@
 # First steps
 
 ## LILA
-**LILA: LILA Integrated Logging Architecture**
+**LILA: LILA Is Logging Architecture**
 Logging and monitoring PL/SQL applications: https://github.com/dirkgermany/LILA-Logging
 
 ## This demo app
