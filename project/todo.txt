@@ -29,34 +29,11 @@ CREATE TABLE lila_registry (
         REFERENCES lila_rules_library(rule_version)
 );
 
--- Index für den Client-Lookup (Schnellste Suche nach freien Servern)
-CREATE INDEX idx_lila_reg_group_load ON lila_registry (server_group, is_active, pipe_load);
-
-```
-
-
 ## Code Optimierung
 * Generalisierung der Nachrichten durch eine Methode, die die Elemente header, meta, payload strukturiert und den Zusammenbau vereinfacht
 
-## Purge
-* Interval wird aktuell mit keep_days mitgeteilt. Okay. Mit einem speziellen Kommando setSessionImmortal oder Parameter bei NEW_SESSION .immortal = 1 wird das in der Master-Tabelle vermerkt. Bei einem Purge-Lauf werden alle Einträge zur Session nicht gelöscht.
-* Das Kommando sollte jederzeit auch für bereits beendete Sessions abgesetzt werden können. Also nicht NEW_SESSION...
-
-## Performance
-* dynamische create index sind noch fehlerhaft und werden nicht auf alle Tabellen angewandt
-* Indexes grundsätzlich prüfen
-
-## Projekt
-* Ordner docs aufräumen, evtl. anderen Ordner für projektorganisatorische Dinge
 
 ## Server as Singleton
-l_lock_result := DBMS_LOCK.REQUEST(
-    lockhandle => l_lock_handle,
-    lockmode   => DBMS_LOCK.X_MODE,
-    timeout    => 0, -- Sofort fehlschlagen, wenn besetzt
-    release_on_commit => FALSE
-);
+Anstatt DBMS_LOCK, das wieder ein spezielles und riskantes Grant erfordert, per Registry sperren:
+Wenn bei Hochfahren ein Eintrag in der Registry mit selbem Pipe-Namen ist und das letzte Update nicht älter als 10 Sekunden ist, ist die Pipe nicht mehr belegt.
 
-IF l_lock_result != 0 THEN
-    raise_application_error(-20001, 'LILA-Server läuft bereits.');
-END IF;
