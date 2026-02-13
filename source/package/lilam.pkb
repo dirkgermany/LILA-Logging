@@ -60,6 +60,7 @@ create or replace PACKAGE BODY LILAM AS
             process_is_dirty    BOOLEAN,
             last_process_flush  TIMESTAMP,
             last_sync_check     TIMESTAMP,
+            group_name          VARCHAR2(50),
             tabName_master      VARCHAR2(100)
         );
     
@@ -152,6 +153,7 @@ create or replace PACKAGE BODY LILAM AS
         
         g_serverPipeName                    VARCHAR2(50)            := NULL;
         g_serverProcessId                   PLS_INTEGER             := -1;
+        g_serverGroupName                   VARCHAR2(50)            := NULL;
         g_shutdownPassword                  varchar2(50);
         
         g_is_high_perf                      BOOLEAN                 := FALSE;
@@ -171,7 +173,7 @@ create or replace PACKAGE BODY LILAM AS
         function extractFromJsonNum(p_json_doc varchar2, jsonPath varchar2) return number;
         function extractFromJsonTime(p_json_doc varchar2, jsonPath varchar2) return TIMESTAMP;
         procedure flushMonitor(p_processId number);
-        function getServerPipeAvailable return varchar2;
+        function getServerPipeAvailable(p_groupName varchar2) return varchar2;
         
         ---------------------------------------------------------------
         -- Antwort Codes stabil vereinheitlichen
@@ -248,7 +250,7 @@ create or replace PACKAGE BODY LILAM AS
         --------------------------------------------------------------------------
         -- Look for free Server-Pipe 
         --------------------------------------------------------------------------
-        function getServerPipeForSession(p_processId number, p_initialize BOOLEAN default TRUE) return varchar2
+        function getServerPipeForSession(p_processId number, p_groupName varchar2, p_initialize BOOLEAN default TRUE) return varchar2
         as
             l_serverPipe varchar2(50);
             l_key        BINARY_INTEGER;
@@ -259,7 +261,7 @@ create or replace PACKAGE BODY LILAM AS
                 RETURN g_client_pipes(p_processId);
             END IF;
             
-            l_serverPipe := getServerPipeAvailable;
+            l_serverPipe := getServerPipeAvailable(p_groupName);
             if l_serverPipe is null then 
                 RAISE_APPLICATION_ERROR(-20004, 'LILAM: Kein aktiver Server gefunden.');
             end if;
@@ -287,17 +289,18 @@ create or replace PACKAGE BODY LILAM AS
             l_header        varchar2(200);
             l_meta          varchar2(200);
             l_data          varchar2(1500);
+            l_groupName     varchar2(50);
             l_serverPipe    varchar2(100);
---            l_key           varchar2(50);
             l_slotIdx PLS_INTEGER;
         begin
             l_clientChannel := getClientPipe;
-            
+            l_groupName := extractFromJsonStr(p_payload, 'group_name');
+
             l_header := '"header":{"msg_type":"API_CALL", "request":"' || p_request || '", "response":"' || l_clientChannel ||'"}';
             l_meta  := '"meta":{"param":"value"}';
             l_data  := '"payload":' || p_payLoad;
             l_msgSend := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
-            l_serverPipe := getServerPipeForSession(p_processId);
+            l_serverPipe := getServerPipeForSession(p_processId, l_groupName);
             
             DBMS_PIPE.PACK_MESSAGE(l_msgSend);
             l_status := DBMS_PIPE.SEND_MESSAGE(l_serverPipe, timeout => 3);
@@ -334,7 +337,7 @@ create or replace PACKAGE BODY LILAM AS
     
         ---------------------------------------------------------------
         
-        function getServerPipeAvailable return varchar2
+        function getServerPipeAvailable(p_groupName varchar2) return varchar2
         as
             l_clientChannel  varchar2(50);
             l_sqlStmt   varchar2(1000);
@@ -346,9 +349,19 @@ create or replace PACKAGE BODY LILAM AS
             SELECT pipe_name 
             FROM ' || C_LILAM_SERVER_REGISTRY || ' 
             WHERE is_active = 1 
-              AND last_activity > SYSTIMESTAMP - INTERVAL ''5'' SECOND 
+              AND last_activity > SYSTIMESTAMP - INTERVAL ''5'' SECOND ';
+              
+            if p_groupName is not null then
+                l_sqlStmt := l_sqlStmt || ' AND group_name = ''' || p_groupName || '''';
+            end if;
+            
+            l_sqlStmt := l_sqlStmt || '
             ORDER BY current_load ASC, last_activity DESC 
             FETCH FIRST 1 ROW ONLY';
+            
+dbms_output.enable();
+dbms_output.put_line('--------------- sql: ' || l_sqlStmt);
+
             execute immediate l_sqlStmt into l_serverPipeName;
             return l_serverPipeName;
             
@@ -431,7 +444,7 @@ create or replace PACKAGE BODY LILAM AS
             l_data  := '"payload":' || p_payLoad;
             
             l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
-            l_pipeName := getServerPipeForSession(p_processId);
+            l_pipeName := getServerPipeForSession(p_processId, null);
             DBMS_PIPE.PACK_MESSAGE(l_msg);
             for i in 1 .. 3 loop
                 l_status := DBMS_PIPE.SEND_MESSAGE(l_pipeName, timeout => p_timeoutSec);
@@ -585,7 +598,8 @@ create or replace PACKAGE BODY LILAM AS
             if not objectExists(C_LILAM_SERVER_REGISTRY, 'TABLE') then
                 sqlStmt := '
                 CREATE TABLE ' || C_LILAM_SERVER_REGISTRY || ' (
-                    pipe_name      VARCHAR2(30) PRIMARY KEY,
+                    pipe_name      VARCHAR2(50) PRIMARY KEY,
+                    group_name     VARCHAR2(50),
                     last_activity  TIMESTAMP,
                     current_load   NUMBER,
                     is_active      NUMBER(1)
@@ -2776,14 +2790,33 @@ create or replace PACKAGE BODY LILAM AS
                 p_timeoutSec    => 5
             );
         end;
-        
+
+        --------------------------------------------------------------------------
+
+        FUNCTION GET_SERVER_PIPE(p_processId NUMBER) RETURN VARCHAR2
+        as
+        begin
+            return getServerPipeForSession(p_processId, null);
+        end;
+
         --------------------------------------------------------------------------
         
         FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2
         as
             l_payload    varchar2(1000);
         begin
-            l_payload := '{"process_name":"' || p_processName || '", "log_level":' || p_logLevel || ', "proc_steps_todo":' || 
+            l_payload := '{"process_name":"' || p_processName  || '", "log_level":' || p_logLevel || ', "proc_steps_todo":' || 
+                            p_procStepsToDo || ', "days_to_keep":' || p_daysToKeep || ', "tabname_master":"' || p_tabNameMaster || '"}';                            
+            return server_new_session(l_payload);
+        end;
+
+        --------------------------------------------------------------------------
+        
+        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_groupName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2
+        as
+            l_payload    varchar2(1000);
+        begin
+            l_payload := '{"process_name":"' || p_processName  || '", "group_name":"' || p_groupName || '", "log_level":' || p_logLevel || ', "proc_steps_todo":' || 
                             p_procStepsToDo || ', "days_to_keep":' || p_daysToKeep || ', "tabname_master":"' || p_tabNameMaster || '"}';                            
             return server_new_session(l_payload);
         end;
@@ -2793,8 +2826,7 @@ create or replace PACKAGE BODY LILAM AS
             l_ProcessId number(19,0) := -500;   
             l_payload   varchar2(1000);
             l_response  varchar2(100);        
-            jasonObj    JSON_OBJECT_T := JSON_OBJECT_T();
-        begin
+        begin                        
             -- zunächst mal schauen, welche Server bereitstehen
             l_response := waitForResponse(null, 'NEW_SESSION', p_jasonString, C_TIMEOUT_NEW_SESSION);
             
@@ -2824,15 +2856,7 @@ create or replace PACKAGE BODY LILAM AS
             return -200;
         end;
         --------------------------------------------------------------------------
-        
-        function GET_SERVER_PIPE (p_processId number) return varchar2
-        as
-        begin
-            return getServerPipeForSession(p_processId, false);
-        end;
-        
-        --------------------------------------------------------------------------
-        
+                
         PROCEDURE DUMP_BUFFER_STATS AS
             v_key VARCHAR2(100);
             v_log_total NUMBER := 0;
@@ -2954,21 +2978,24 @@ create or replace PACKAGE BODY LILAM AS
             sqlStmt := '
             insert into ' || C_LILAM_SERVER_REGISTRY || ' (
                 pipe_name,
+                group_name,
                 last_activity,
                 is_active,
                 current_load
             ) values (
                 :1,
+                :2,
                 SYSTIMESTAMP,
                 1,
                 0
             )';
-            execute immediate sqlStmt using g_serverPipeName;
+            execute immediate sqlStmt using g_serverPipeName, g_serverGroupName;
     
             commit;
         
         exception
             when others then
+    raise;
                 rollback;
         end;
         
@@ -3045,7 +3072,7 @@ create or replace PACKAGE BODY LILAM AS
             
         --------------------------------------------------------------------------
     
-        procedure START_SERVER(p_pipeName varchar2, p_password varchar2)
+        procedure START_SERVER(p_pipeName varchar2, p_groupName varchar2, p_password varchar2)
         as
             v_key VARCHAR2(100); 
             l_clientChannel  varchar2(50);
@@ -3063,6 +3090,7 @@ create or replace PACKAGE BODY LILAM AS
         begin
             g_shutdownPassword := p_password;
             g_serverPipeName := l_pipe;
+            g_serverGroupName := p_groupName;
             g_serverProcessId := new_session('LILAM_REMOTE_SERVER', logLevelDebug);
             registerServerPipe;
             preparePipe(g_serverPipeName);
