@@ -61,6 +61,10 @@ LILAM_VERSION constant varchar2(20) := 'v1.3.0';
     FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_tabNameMaster VARCHAR2 default 'LILAM_LOG') RETURN NUMBER;
     FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_daysToKeep NUMBER, p_tabNameMaster VARCHAR2 default 'LILAM_LOG') RETURN NUMBER;
     FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster VARCHAR2 DEFAULT 'LILAM_LOG') RETURN NUMBER;
+
+    FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_groupName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2;
+
+
     FUNCTION SERVER_NEW_SESSION(p_jasonString varchar2) RETURN NUMBER;
     FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, 
             p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2;
@@ -109,7 +113,7 @@ LILAM_VERSION constant varchar2(20) := 'v1.3.0';
     -- Server control
     -----------------
     FUNCTION CREATE_SERVER(p_password varchar2) RETURN VARCHAR2;
-    procedure START_SERVER(p_pipeName varchar2, p_password varchar2);
+    procedure START_SERVER(p_pipeName varchar2, p_groupName varchar2, p_password varchar2);
     procedure SERVER_SHUTDOWN(p_processId number, p_pipeName varchar2, p_password varchar2);
     FUNCTION GET_SERVER_PIPE(p_processId NUMBER) RETURN VARCHAR2;
 
