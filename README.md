@@ -23,10 +23,8 @@ LILAM is developed by a developer who hates over-engineered tools. Focus: 5 minu
 - [Key features](#key-features)
 - [Fast integration](#fast-integration)
 - [Advantages](#advantages)
-- [Logging](#logging)
-  - [How to log](#how-to-log)
-- [Monitoring](#monitoring)
-  - [How to monitor](#how-to-monitor)
+- [Process Tracking & Monitoring](#process-tracking--monitoring]
+  - [How to](#how-to)
 - [Performance benchmark](#performance-benchmark)
 - [Roadmap](#roadmap)
 - [License](#license)
@@ -129,15 +127,6 @@ By avoiding file system dependencies (`UTL_FILE`) and focusing on native databas
 LILAM promotes a standardized error-handling and monitoring culture within development teams. Its easy-to-use API allows for a "zero-config" start, enabling developers to implement professional observability in just a few minutes. No excessive DBA grants or infrastructure overhead required — just provide standard PL/SQL permissions, deploy the package, and start logging immediately.
 
 ---
-## Demo
-Execute the following statement in the SQL editor (optionally activate dbms-output for your session beforehand):
-```sql
-exec lilam.is_alive;
-select * from lilam_log;
-```
-If you have activated dbms output, you will receive an additional message there.
-
----
 ## Process Tracking & Monitoring
 LILAM categorizes data by its intended use to ensure maximum performance for status queries and analysis:
 * **Lifecycle & Progress (Master):** One persistent record per process run. It provides real-time answers to: What is currently running? What is the progress (steps done/todo)? What is the overall status?
@@ -204,21 +193,16 @@ SELECT * FROM lilam_log_detail WHERE process_id = <id> AND monitoring = 1
 >| 1          | ... | ... | 1          | MY_ACTION  | 1              | NULL            | NULL
 >| 1          | ... | ... | 1          | MY_ACTION  | 2              | 1000            | 1000
 
+
+### Data Retention & Maintenance
+LILAM manages its storage footprint automatically. When a process starts via NEW_SESSION or SERVER_NEW_SESSION, the system performs a cleanup based on the process name.
+Retention Period: You can specify an optional retention period (default: 100 days). All log and monitor entries for the same process name exceeding this age are physically deleted.
+Immortal Flag: Processes flagged as immortal are exempt from automatic cleanup, ensuring their history is preserved indefinitely for audit purposes.
+
 ---
 ## API
-The API provides all process data which belongs to the process_id (see [Logging](#logging)).
-```sql
-...
-lProcessStatus := lilam.get_process_status(p_processId);
-lProcessInfo := lilam.get_process_info(p_processId);
-lStepsDone := lilam.get_steps_done(p_processId);
-...
-return 'ID = ' || id || '; Status: ' || lProcessStatus || '; Info: ' || lProcessInfo || '; Steps completed: ' || lStepsDone;
-```
-```sql
-SELECT my_app.getStatus(1) proc_status FROM dual;
-> ID = 1; Status: OK; Info: 'just working'; Steps completed: 42
-```
+Please refer to [API Reference](docs/API.md). 
+
 ---
 ## Performance Benchmark
 LILAM is designed for high-concurrency environments. The following results were achieved on standard **Consumer Hardware** (Fujitsu LIFEBOOK A-Series) running an **Oracle Database inside VirtualBox**. This demonstrates the massive efficiency of the Pipe-to-Bulk architecture, even when facing significant virtualization overhead (I/O emulation and CPU scheduling):
