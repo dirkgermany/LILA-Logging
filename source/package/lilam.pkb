@@ -352,7 +352,7 @@ create or replace PACKAGE BODY LILAM AS
               AND last_activity > SYSTIMESTAMP - INTERVAL ''5'' SECOND ';
               
             if p_groupName is not null then
-                l_sqlStmt := l_sqlStmt || ' AND group_name = ''' || p_groupName || '''';
+                l_sqlStmt := l_sqlStmt || ' AND upper(group_name) = ''' || upper(p_groupName) || '''';
             end if;
             
             l_sqlStmt := l_sqlStmt || '
@@ -493,7 +493,8 @@ create or replace PACKAGE BODY LILAM AS
             
         exception
             when OTHERS then
-                null;
+        raise;
+     --           null;
         end;
         
         --------------------------------------------------------------------------
