@@ -42,6 +42,7 @@ LILAM_VERSION constant varchar2(20) := 'v1.3.0';
         proc_steps_done PLS_INTEGER,
         status          PLS_INTEGER,
         info            VARCHAR2(4000),
+        proc_immortal   PLS_INTEGER := 0,
         tab_name_master VARCHAR2(100)
     );
 
@@ -50,6 +51,7 @@ LILAM_VERSION constant varchar2(20) := 'v1.3.0';
         logLevel        PLS_INTEGER := logLevelMonitor,
         proc_stepsToDo  PLS_INTEGER,
         daysToKeep      PLS_INTEGER,
+        procImmortal    PLS_INTEGER := 0,
         tab_name_master VARCHAR2(100) DEFAULT 'LILAM_LOG'
     );
 
@@ -81,6 +83,7 @@ LILAM_VERSION constant varchar2(20) := 'v1.3.0';
     PROCEDURE SET_PROC_STEPS_TODO(p_processId NUMBER, p_procStepsToDo NUMBER);
     PROCEDURE SET_PROC_STEPS_DONE(p_processId NUMBER, p_procStepsDone NUMBER);
     PROCEDURE PROC_STEP_DONE(p_processId NUMBER);
+    PROCEDURE SET_PROC_IMMORTAL(p_processId NUMBER, p_immortal NUMBER);
 
     -------------------------------
     -- Request process informations
