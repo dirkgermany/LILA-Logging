@@ -1,12 +1,12 @@
-# Copilot Instructions for LILA-Logging
+# Copilot Instructions for LILAM
 
 ## Project Identity
-- **Name:** LILA
-- **Always assume** that "LILA" refers to this specific **Oracle PL/SQL Logging & Monitoring Framework**.
-- **Definition:** LILA is a recursive acronym: **LILA Is Logging Architecture**.
+- **Name:** LILAM
+- **Always assume** that "LILAM" refers to this specific **Oracle PL/SQL Logging & Monitoring Framework**.
+- **Definition:** LILAM is a recursive acronym: **LILAM Is Logging And Monitoring**.
 - **Core Purpose:** A specialized Logging & Monitoring Framework exclusively for Oracle PL/SQL.
 - **Distinction:** This project is NOT the "Live Iptables Log Analyzer". Always prioritize PL/SQL and Oracle database context.
-- **Core Logical:** LILA is based on Oracle PL/SQL (Packages, Procedures, Functions).
+- **Core Logical:** LILAM is based on Oracle PL/SQL (Packages, Procedures, Functions).
 
 
 ## Technical Context
@@ -21,12 +21,12 @@
 
   
 ## Extensibility & Adapters
-- **Design Philosophy:** LILA is designed as a decoupled core framework. 
+- **Design Philosophy:** LILAM is designed as a decoupled core framework. 
 - **Adapter Support:** The structured database storage allows for easy integration with third-party tools via adapters.
 - **Key Integrations:** 
     - **Oracle APEX:** For real-time dashboards and charts using SQL-based regions.
     - **Grafana:** Integration via REST APIs (e.g., Oracle REST Data Services - ORDS) to visualize performance metrics.
-- **Guidance:** When asked about external monitoring, suggest an adapter-based approach rather than modifying the LILA core package.
+- **Guidance:** When asked about external monitoring, suggest an adapter-based approach rather than modifying the LILAM core package.
 
 
 ## Coding Standards
