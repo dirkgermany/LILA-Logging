@@ -31,7 +31,7 @@ create or replace PACKAGE BODY LILAM AS
         C_PARAM_MASTER_TABLE              CONSTANT varchar2(20) := 'PH_MASTER_TABLE';
         C_PARAM_DETAIL_TABLE              CONSTANT varchar2(20) := 'PH_DETAIL_TABLE';
         C_SUFFIX_DETAIL_NAME              CONSTANT varchar2(16) := '_DETAIL';
-        C_LILAM_SERVER_REGISTRY            CONSTANT VARCHAR2(20) := 'LILAM_SERVER_REGISTRY';
+        C_LILAM_SERVER_REGISTRY           CONSTANT VARCHAR2(30) := 'LILAM_SERVER_REGISTRY';
       
         ---------------------------------------------------------------
         -- Other general Parameters
@@ -280,15 +280,15 @@ create or replace PACKAGE BODY LILAM AS
         ) return varchar2
         as
             l_msgSend       VARCHAR2(4000);
-            l_msgReceive       VARCHAR2(4000);
-            l_status    PLS_INTEGER;
+            l_msgReceive    VARCHAR2(4000);
+            l_status        PLS_INTEGER;
             l_statusReceive PLS_INTEGER;
-            l_clientChannel  varchar2(50);
-            l_header    varchar2(100);
-            l_meta      varchar2(100);
-            l_data      varchar2(1500);
-            l_serverPipe  varchar2(100);
-            l_key       varchar2(50);
+            l_clientChannel varchar2(50);
+            l_header        varchar2(200);
+            l_meta          varchar2(200);
+            l_data          varchar2(1500);
+            l_serverPipe    varchar2(100);
+--            l_key           varchar2(50);
             l_slotIdx PLS_INTEGER;
         begin
             l_clientChannel := getClientPipe;
@@ -314,6 +314,7 @@ create or replace PACKAGE BODY LILAM AS
             
         exception
             when others then
+    raise;
                 l_status := DBMS_PIPE.REMOVE_PIPE(l_clientChannel);
         end;
         
@@ -581,7 +582,7 @@ create or replace PACKAGE BODY LILAM AS
                 run_sql(sqlStmt);
             end if ;
     
-            if not objectExists('LILAM_PIPE_REGISTRY', 'TABLE') then
+            if not objectExists(C_LILAM_SERVER_REGISTRY, 'TABLE') then
                 sqlStmt := '
                 CREATE TABLE ' || C_LILAM_SERVER_REGISTRY || ' (
                     pipe_name      VARCHAR2(30) PRIMARY KEY,
@@ -2159,7 +2160,9 @@ create or replace PACKAGE BODY LILAM AS
             g_log_groups.delete;
             g_dirty_queue.delete;
             v_indexSession.delete;
-            g_sessionList.delete;
+            if not g_sessionList is null then
+                g_sessionList.delete;
+            end if;
             g_process_cache.DELETE;
             g_monitor_shadows.DELETE;
             g_local_throttle_cache.DELETE;                       
@@ -2322,7 +2325,7 @@ create or replace PACKAGE BODY LILAM AS
                 createLogTables(p_session_init.tab_name_master);
             end if ;
     
-            select seq_lilam_log.nextVal into pProcessId from dual;
+            execute immediate 'select seq_lilam_log.nextVal from dual' into pProcessId;
             -- persist to session internal table
             insertSession (p_session_init.tab_name_master, pProcessId, p_session_init.logLevel);
             if p_session_init.logLevel > logLevelSilent then -- and p_session_init.daysToKeep is not null then
