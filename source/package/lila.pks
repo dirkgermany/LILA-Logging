@@ -1,6 +1,6 @@
-create or replace PACKAGE LILA AS
-    /* Complete Doc and last version see https://github.com/dirkgermany/LILA-Logging/docs */
-LILA_VERSION constant varchar2(20) := 'v1.3.0';
+create or replace PACKAGE LILAM AS
+    /* Complete Doc and last version see https://github.com/dirkgermany/LILAM/docs */
+LILAM_VERSION constant varchar2(20) := 'v1.3.0';
 
     -- =========
     -- Log Level
@@ -50,7 +50,7 @@ LILA_VERSION constant varchar2(20) := 'v1.3.0';
         logLevel PLS_INTEGER := logLevelMonitor,
         proc_stepsToDo PLS_INTEGER,
         daysToKeep PLS_INTEGER,
-        tab_name_master VARCHAR2(100) DEFAULT 'LILA_LOG'
+        tab_name_master VARCHAR2(100) DEFAULT 'LILAM_LOG'
     );
 
 
@@ -58,9 +58,9 @@ LILA_VERSION constant varchar2(20) := 'v1.3.0';
     -- Life cycle of a log session
     ------------------------------
     FUNCTION NEW_SESSION(p_session_init t_session_init) RETURN NUMBER;
-    FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_tabNameMaster VARCHAR2 default 'LILA_LOG') RETURN NUMBER;
-    FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_daysToKeep NUMBER, p_tabNameMaster VARCHAR2 default 'LILA_LOG') RETURN NUMBER;
-    FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster VARCHAR2 DEFAULT 'LILA_LOG') RETURN NUMBER;
+    FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_tabNameMaster VARCHAR2 default 'LILAM_LOG') RETURN NUMBER;
+    FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_daysToKeep NUMBER, p_tabNameMaster VARCHAR2 default 'LILAM_LOG') RETURN NUMBER;
+    FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster VARCHAR2 DEFAULT 'LILAM_LOG') RETURN NUMBER;
     FUNCTION SERVER_NEW_SESSION(p_jasonString varchar2) RETURN NUMBER;
     FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, 
             p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2;
@@ -119,6 +119,6 @@ LILA_VERSION constant varchar2(20) := 'v1.3.0';
     ----------
     -- Testing
     ----------
-    -- Check if LILA works
+    -- Check if LILAM works
     PROCEDURE IS_ALIVE;
-END LILA;
+END LILAM;
