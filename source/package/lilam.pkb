@@ -23,7 +23,7 @@ create or replace PACKAGE BODY LILAM AS
         -- general Flush Time-Duration
         C_FLUSH_MILLIS_THRESHOLD        PLS_INTEGER          := 1500;  -- Max. Millis until flush
         C_FLUSH_LOG_THRESHOLD           PLS_INTEGER          := 50000; -- Max. number of dirty buffered logs until flush
-        C_FLUSH_MONITOR_THRESHOLD       PLS_INTEGER          := 20000; -- Max. number of dirty buffered metrics until flush
+        C_FLUSH_MONITOR_THRESHOLD         PLS_INTEGER          := 20000; -- Max. number of dirty buffered metrics until flush
         
         ---------------------------------------------------------------
         -- Placeholders for tables
@@ -44,6 +44,12 @@ create or replace PACKAGE BODY LILAM AS
         -- Pipe handling
         C_PIPE_ID_PENDING               CONSTANT BINARY_INTEGER := -1; 
         C_INTERLEAVE_PIPE_SUFFIX        CONSTANT VARCHAR2(20)   := '_INTERLEAVE';
+        
+        ---------------------------------------------------------------
+        -- Kind of Monitor Entries
+        ---------------------------------------------------------------
+        C_MON_TYPE_EVENT                CONSTANT PLS_INTEGER := 0; -- Simple event, no stop-time
+        C_MON_TYPE_TRACE                CONSTANT PLS_INTEGER := 1; -- Transaction with start and stop
             
         ---------------------------------------------------------------
         -- Sessions
@@ -55,7 +61,7 @@ create or replace PACKAGE BODY LILAM AS
             serial_no           PLS_INTEGER := 0,
             log_level           PLS_INTEGER := 0,
             monitoring          PLS_INTEGER := 0,
-            last_monitor_flush  TIMESTAMP, -- Zeitpunkt des letzten Monitor-Flushes
+            last_monitor_flush    TIMESTAMP, -- Zeitpunkt des letzten Monitor-Flushes
             last_log_flush      TIMESTAMP, -- Zeitpunkt des letzten Log-Flushes
             monitor_dirty_count PLS_INTEGER := 0,  -- monitor entries per process counter
             log_dirty_count     PLS_INTEGER := 0,  -- Logs per process counter
@@ -99,17 +105,19 @@ create or replace PACKAGE BODY LILAM AS
             process_id      NUMBER(19,0),
             action_name     VARCHAR2(100),
             context_name    VARCHAR2(100),
-            avg_action_time NUMBER,        -- Umbenannt
-            start_time      TIMESTAMP,     -- Startzeitpunkt der Aktion
-            stop_time       TIMESTAMP,     -- Startzeitpunkt der Aktion
-            used_time       NUMBER,        -- Dauer der letzten Ausführung (in Sek.)
-            mon_steps_done  PLS_INTEGER := 0 -- Hilfsvariable für Durchschnittsberechnung
+            monitor_type    PLS_INTEGER,
+            avg_action_time NUMBER,             -- Umbenannt
+            start_time      TIMESTAMP,          -- Startzeitpunkt der Aktion
+            stop_time       TIMESTAMP,          -- Startzeitpunkt der Aktion
+            used_time       NUMBER,             -- Dauer der letzten Ausführung (in Sek.)
+            actions_count   PLS_INTEGER := 0    -- Hilfsvariable für Durchschnittsberechnung
         );
         TYPE t_monitor_history_tab IS TABLE OF t_monitor_buffer_rec;    
-        TYPE t_monitor_map IS TABLE OF t_monitor_history_tab INDEX BY VARCHAR2(100);
+        TYPE t_monitor_map IS TABLE OF t_monitor_history_tab INDEX BY VARCHAR2(200);
         g_monitor_groups t_monitor_map;
-        TYPE t_monitor_shadow_map IS TABLE OF t_monitor_buffer_rec INDEX BY VARCHAR2(100);
+        TYPE t_monitor_shadow_map IS TABLE OF t_monitor_buffer_rec INDEX BY VARCHAR2(200);
         g_monitor_shadows t_monitor_shadow_map;
+        g_monitor_averages t_monitor_shadow_map;
                     
         ---------------------------------------------------------------
         -- Logging
@@ -607,7 +615,7 @@ create or replace PACKAGE BODY LILAM AS
                     "CONTEXT"  VARCHAR2(100),
                     "USED_MILLIS"   NUMBER(19,0), -- Millis als Zahl für einfache Auswertung
                     "AVG_MILLIS"    NUMBER(19,0),
-                    "STEPS_DONE"    NUMBER(19,0)
+                    "ACTION_COUNT"    NUMBER(19,0)
                 )';
                 sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_MON_TABLE, C_SUFFIX_MON_TABLE, p_TabNameMaster);
                 run_sql(sqlStmt);
@@ -950,7 +958,8 @@ create or replace PACKAGE BODY LILAM AS
             p_target_table varchar2,
             p_actions      sys.odcivarchar2list,
             p_contexts      sys.odcivarchar2list,
-            p_mon_steps_done   sys.odcinumberlist,
+            p_mon_types    sys.odcinumberlist,
+            p_actions_count   sys.odcinumberlist,
             p_used         sys.odcinumberlist,
             p_avgs         sys.odcinumberlist,
             p_timesStart        sys.odcidatelist,
@@ -969,9 +978,9 @@ create or replace PACKAGE BODY LILAM AS
                 forall i in 1 .. p_actions.count SAVE EXCEPTIONS
                     execute immediate
                     'insert into ' || v_safe_table || ' 
-                    (PROCESS_ID, ACTION, CONTEXT, STEPS_DONE, USED_MILLIS, AVG_MILLIS, START_TIME, STOP_TIME, SESSION_USER, HOST_NAME)
-                    values (:1, :2, :3, :4, :5, :6, :7, :8, :9, :10)'
-                    using p_processId, p_actions(i), p_contexts(i), p_mon_steps_done(i), p_used(i), p_avgs(i), p_timesStart(i),
+                    (PROCESS_ID, ACTION, CONTEXT, MON_TYPE, ACTION_COUNT, USED_MILLIS, AVG_MILLIS, START_TIME, STOP_TIME, SESSION_USER, HOST_NAME)
+                    values (:1, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11)'
+                    using p_processId, p_actions(i), p_contexts(i), p_mon_types(i), p_actions_count(i), p_used(i), p_avgs(i), p_timesStart(i),
                           p_timesStop(i), v_user, v_host;
                 
                 commit;
@@ -1067,7 +1076,8 @@ create or replace PACKAGE BODY LILAM AS
         
             v_actions     sys.odcivarchar2list := sys.odcivarchar2list();
             v_contexts    sys.odcivarchar2list := sys.odcivarchar2list();
-            v_mon_steps_done  sys.odcinumberlist   := sys.odcinumberlist();
+            v_mon_types   sys.odcinumberlist  := sys.odcinumberlist();
+            v_actions_count  sys.odcinumberlist   := sys.odcinumberlist();
             v_used        sys.odcinumberlist   := sys.odcinumberlist();
             v_avgs        sys.odcinumberlist   := sys.odcinumberlist();
             v_timesStart  sys.odcidatelist     := sys.odcidatelist();
@@ -1084,7 +1094,8 @@ create or replace PACKAGE BODY LILAM AS
                         for i in 1 .. g_monitor_groups(v_group_key).COUNT loop
                             v_actions.extend;    v_actions(v_actions.last)    := g_monitor_groups(v_group_key)(i).action_name;
                             v_contexts.extend;    v_contexts(v_contexts.last)    := g_monitor_groups(v_group_key)(i).context_name;
-                            v_mon_steps_done.extend; v_mon_steps_done(v_mon_steps_done.last) := g_monitor_groups(v_group_key)(i).mon_steps_done;
+                            v_mon_types.extend;  v_mon_types(v_mon_types.last) := g_monitor_groups(v_group_key)(i).monitor_type;
+                            v_actions_count.extend; v_actions_count(v_actions_count.last) := g_monitor_groups(v_group_key)(i).actions_count;
                             v_used.extend;       v_used(v_used.last)          := g_monitor_groups(v_group_key)(i).used_time;
                             v_avgs.extend;       v_avgs(v_avgs.last)          := g_monitor_groups(v_group_key)(i).avg_action_time;
                             v_timesStart.extend;      v_timesStart(v_timesStart.last) := cast(g_monitor_groups(v_group_key)(i).start_time as date);
@@ -1105,7 +1116,8 @@ create or replace PACKAGE BODY LILAM AS
                     p_target_table => v_targetTable,
                     p_actions      => v_actions,
                     p_contexts     => v_contexts,
-                    p_mon_steps_done   => v_mon_steps_done,
+                    p_mon_types    => v_mon_types,
+                    p_actions_count   => v_actions_count,
                     p_used         => v_used,
                     p_avgs         => v_avgs,
                     p_timesStart   => v_timesStart,
@@ -1159,7 +1171,7 @@ create or replace PACKAGE BODY LILAM AS
                     raise;
                 end if ;
         end;
-        
+                    
         --------------------------------------------------------------------------
         -- Hilfsfunktion (intern): Erzeugt den einheitlichen Key für den Index
         --------------------------------------------------------------------------
@@ -1228,7 +1240,7 @@ create or replace PACKAGE BODY LILAM AS
         as
             l_threshold_duration NUMBER;
         begin
-            if p_monitor_rec.mon_steps_done > 5 THEN 
+            if p_monitor_rec.actions_count > 5 THEN 
                 
                 l_threshold_duration := p_monitor_rec.avg_action_time * C_METRIC_ALERT_FACTOR;
             
@@ -1237,7 +1249,7 @@ create or replace PACKAGE BODY LILAM AS
                     raise_alert(
                         p_processId => p_processId,
                         p_action    => p_monitor_rec.action_name,
-                        p_step      => p_monitor_rec.mon_steps_done,
+                        p_step      => p_monitor_rec.actions_count,
                         p_used_time => p_monitor_rec.used_time,
                         p_expected  => p_monitor_rec.avg_action_time
                     );
@@ -1245,13 +1257,37 @@ create or replace PACKAGE BODY LILAM AS
             end if ;
     
         end;
+         
+        --------------------------------------------------------------------------
+        -- Start Tracing remote
+        --------------------------------------------------------------------------    
+        procedure startTraceRemote(p_processId number, p_actionName varchar2, p_contextName varchar2, p_timestamp timestamp default systimestamp)
+        as
+            l_payload varchar2(10000); -- Puffer für den JSON-String
+        begin
+            select json_object(
+                'process_id'    value p_processId,
+                'action_name'   value p_actionName,
+                'context_name'  value p_contextName,
+                'timestamp'     value p_timestamp
+                returning varchar2
+            )
+            into l_payload from dual;
+            sendNoWait(p_processId, 'START_TRACE', l_payload, 0.5);
+                    
+        EXCEPTION
+            WHEN OTHERS THEN
+                if should_raise_error(p_processId) then
+                    raise;
+                end if ;
+        end;
         
         --------------------------------------------------------------------------
-        -- Creating and adding/updating a record in the monitor list
+        -- Creating and adding/updating a trace entry in the monitor list
         --------------------------------------------------------------------------    
-        procedure insertMonitorRemote(p_processId number, p_actionName varchar2, p_contextName varchar2, p_timestamp timestamp default systimestamp)
+        procedure insertTraceMonitorRemote(p_processId number, p_actionName varchar2, p_contextName varchar2, p_timestamp timestamp default systimestamp)
         as
-            l_payload varchar2(32767); -- Puffer für den JSON-String
+            l_payload varchar2(10000); -- Puffer für den JSON-String
         begin
             -- Da das über die PIPE läuft und damit nicht gewährleistet ist, dass bei
             -- späterem Aufruf von insertMonitor im Server der Zeitpunkt 'in time' ist,
@@ -1265,19 +1301,48 @@ create or replace PACKAGE BODY LILAM AS
                 returning varchar2
             )
             into l_payload from dual;
-            sendNoWait(p_processId, 'MARK_STEP', l_payload, 0.5);
+            sendNoWait(p_processId, 'STOP_TRACE', l_payload, 0.5);
                     
         EXCEPTION
             WHEN OTHERS THEN
                 if should_raise_error(p_processId) then
                     raise;
-                end if ;
-    
+                end if ;    
+        end;
+        
+        --------------------------------------------------------------------------
+ 
+        --------------------------------------------------------------------------
+        -- Creating and adding/updating a record in the monitor list
+        --------------------------------------------------------------------------    
+        procedure insertEventMonitorRemote(p_processId number, p_actionName varchar2, p_contextName varchar2, p_timestamp timestamp default systimestamp)
+        as
+            l_payload varchar2(10000); -- Puffer für den JSON-String
+        begin
+            -- Da das über die PIPE läuft und damit nicht gewährleistet ist, dass bei
+            -- späterem Aufruf von insertMonitor im Server der Zeitpunkt 'in time' ist,
+            -- muss der Zeitpunkt vom Client bei Aufruf gesetzt werden.
+            -- Erzeugung des JSON-Objekts
+            select json_object(
+                'process_id'    value p_processId,
+                'action_name'   value p_actionName,
+                'context_name'  value p_contextName,
+                'timestamp'     value p_timestamp
+                returning varchar2
+            )
+            into l_payload from dual;
+            sendNoWait(p_processId, 'MARK_EVENT', l_payload, 0.5);
+                    
+        EXCEPTION
+            WHEN OTHERS THEN
+                if should_raise_error(p_processId) then
+                    raise;
+                end if ;    
         end;
         
         --------------------------------------------------------------------------
         
-        procedure write_to_monitor_buffer (p_processId number, p_actionName varchar2, p_contextName varchar2, p_timestamp timestamp)
+        procedure writeEventToMonitorBuffer (p_processId number, p_actionName varchar2, p_contextName varchar2, p_timestamp timestamp)
         as
             -- Key-Präfix sollte idealerweise p_processId enthalten für schnelleren Flush-Zugriff
             v_key        constant varchar2(200) := buildMonitorKey(p_processId, p_actionName, p_contextName);
@@ -1285,7 +1350,7 @@ create or replace PACKAGE BODY LILAM AS
             v_used_time  number := 0;
             v_new_avg    number := 0;
             v_new_count  PLS_INTEGER := 1;
-            v_new_rec    t_monitor_buffer_rec;
+--            v_new_rec    t_monitor_buffer_rec;
             v_first_idx  PLS_INTEGER;
             
             l_prev_idx   PLS_INTEGER;
@@ -1294,7 +1359,7 @@ create or replace PACKAGE BODY LILAM AS
             l_prev       t_monitor_buffer_rec; 
         begin
             if is_remote(p_processId) then
-                insertMonitorRemote(p_processId, p_actionName, p_contextName, p_timestamp);
+                insertEventMonitorRemote(p_processId, p_actionName, p_contextName, p_timestamp);
                 return;
             end if ;
     
@@ -1315,16 +1380,16 @@ create or replace PACKAGE BODY LILAM AS
             -- Die nächsten Werte abhängig davon ob es einen Vorgänger gibt
             if g_monitor_shadows.EXISTS(v_key) then            -- Es gibt einen Vorgänger
                 l_prev := g_monitor_shadows(v_key);
-                g_monitor_groups(v_key)(l_new_idx).mon_steps_done      := l_prev.mon_steps_done + 1;
+                g_monitor_groups(v_key)(l_new_idx).actions_count      := l_prev.actions_count + 1;
                 g_monitor_groups(v_key)(l_new_idx).used_time       := get_ms_diff(l_prev.start_time, v_now);
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := calculate_avg(
                                                                         l_prev.avg_action_time, 
-                                                                        g_monitor_groups(v_key)(l_new_idx).mon_steps_done, 
+                                                                        g_monitor_groups(v_key)(l_new_idx).actions_count, 
                                                                         g_monitor_groups(v_key)(l_new_idx).used_time
                                                                       );
             ELSE
                 -- Erster Eintrag der Session/Action
-                g_monitor_groups(v_key)(l_new_idx).mon_steps_done      := 1;
+                g_monitor_groups(v_key)(l_new_idx).actions_count      := 1;
                 g_monitor_groups(v_key)(l_new_idx).used_time       := 0; -- Erster Marker hat keine Dauer
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := 0;
             end if ;
@@ -1341,6 +1406,98 @@ create or replace PACKAGE BODY LILAM AS
             g_dirty_queue(p_processId) := TRUE; 
             
             validateDurationInAverage(p_processId, g_monitor_groups(v_key)(l_new_idx));
+            SYNC_ALL_DIRTY;
+            
+        exception
+            when others then
+                if should_raise_error(p_processId) then
+                    RAISE;
+                end if ;
+        end;
+    
+        --------------------------------------------------------------------------
+        
+        procedure startTrace (p_processId number, p_actionName varchar2, p_contextName varchar2, p_timestamp timestamp)
+        as
+            v_key constant varchar2(200) := buildMonitorKey(p_processId, p_actionName, p_contextName);
+            v_idx        PLS_INTEGER;
+        begin
+            if is_remote(p_processId) then
+                startTraceRemote(p_processId, p_actionName, p_contextName, p_timestamp);
+                return;
+            end if ;
+
+            g_monitor_shadows(v_key).start_time := nvl(p_timestamp, systimestamp);
+            g_monitor_shadows(v_key).stop_time := null;
+            g_monitor_shadows(v_key).monitor_type := 1; -- Trace
+            g_monitor_shadows(v_key).action_name := p_actionName;
+            g_monitor_shadows(v_key).context_name := p_contextName;
+            
+            v_idx := v_indexSession(p_processId);
+        end;
+        
+        --------------------------------------------------------------------------
+
+        procedure writeTraceToMonitorBuffer (p_processId number, p_actionName varchar2, p_contextName varchar2, p_timestamp timestamp)
+        as
+            -- Key-Präfix sollte idealerweise p_processId enthalten für schnelleren Flush-Zugriff
+            v_key        constant varchar2(200) := buildMonitorKey(p_processId, p_actionName, p_contextName);
+            v_used_time  number := 0;
+            v_new_avg    number := 0;
+            v_new_rec    t_monitor_buffer_rec;
+            v_first_idx  PLS_INTEGER;
+            l_new_idx    PLS_INTEGER;
+            v_idx        PLS_INTEGER;
+        begin
+            if is_remote(p_processId) then
+                insertTraceMonitorRemote(p_processId, p_actionName, p_contextName, p_timestamp);
+                return;
+            end if ;
+                
+            if v_indexSession.EXISTS(p_processId) and 
+               logLevelMonitor > g_sessionList(v_indexSession(p_processId)).log_level then
+                return;
+            end if ;
+            
+            -- check if open transaction exists
+            if NOT g_monitor_shadows.EXISTS(v_key) then
+                return;
+            end if;
+            
+            v_new_rec           := g_monitor_shadows(v_key);
+            v_new_rec.stop_time := nvl(p_timestamp, systimestamp);
+            v_new_rec.used_time := get_ms_diff(v_new_rec.start_time, v_new_rec.stop_time);
+            
+            IF NOT g_monitor_averages.EXISTS(v_key) THEN
+                -- Erster Durchlauf für diese Aktion/Kontext
+                v_new_rec.actions_count   := 1;
+                v_new_rec.avg_action_time := v_new_rec.used_time;
+            ELSE
+                -- Bestehende Werte aus dem Gedächtnis holen
+                v_new_rec.actions_count    := g_monitor_averages(v_key).actions_count + 1;
+                -- Gleitender Durchschnitt berechnen
+                -- Formel: ((Alter Schnitt * Alte Anzahl) + Neue Zeit) / Neue Anzahl
+                v_new_rec.avg_action_time := 
+                    ((g_monitor_averages(v_key).avg_action_time * g_monitor_averages(v_key).actions_count) 
+                     + v_new_rec.used_time) / v_new_rec.actions_count;
+            END IF;
+            
+            -- Gedächtnis für den nächsten Lauf aktualisieren
+            g_monitor_averages(v_key) := v_new_rec;
+
+            if NOT g_monitor_groups.EXISTS(v_key) THEN
+                g_monitor_groups(v_key) := t_monitor_history_tab();
+            end if ;
+            g_monitor_groups(v_key).EXTEND;
+            g_monitor_groups(v_key)(g_monitor_groups(v_key).LAST) := v_new_rec;
+            
+            g_monitor_shadows.delete(v_key);         
+            
+            v_idx := v_indexSession(p_processId);            
+--            validateDurationInAverage(p_processId, g_monitor_groups(v_key)(l_new_idx));
+            g_sessionList(v_idx).monitor_dirty_count := nvl(g_sessionList(v_idx).monitor_dirty_count, 0) + 1;
+            g_dirty_queue(p_processId) := TRUE; 
+            
             SYNC_ALL_DIRTY;
             
         exception
@@ -1414,12 +1571,29 @@ create or replace PACKAGE BODY LILAM AS
         --------------------------------------------------------------------------
         -- Monitoring a step
         --------------------------------------------------------------------------
-        PROCEDURE MARK_STEP(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2, p_timestamp timestamp default NULL)
+        PROCEDURE MARK_EVENT(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2, p_timestamp timestamp default NULL)
         as
         begin
-            write_to_monitor_buffer (p_processId, p_actionName, p_contextName, p_timestamp);     
+            writeEventToMonitorBuffer (p_processId, p_actionName, p_contextName, p_timestamp);     
         end;
         --------------------------------------------------------------------------
+        
+        
+        --------------------------------------------------------------------------
+        -- Monitoring a transaction
+        --------------------------------------------------------------------------
+        PROCEDURE TRACE_START(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2, p_timestamp timestamp default NULL)
+        as
+        begin
+            startTrace (p_processId, p_actionName, p_contextName, p_timestamp);     
+        end;
+        --------------------------------------------------------------------------
+
+        PROCEDURE TRACE_STOP(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2, p_timestamp TIMESTAMP DEFAULT NULL)
+        as
+        begin
+            writeTraceToMonitorBuffer(p_processId, p_actionName, p_contextName, p_timestamp);
+        end;
         
         function getLastMonitorEntryRemote(p_processId number, p_actionName varchar2, p_contextName varchar2) return t_monitor_buffer_rec
         as
@@ -1438,7 +1612,7 @@ create or replace PACKAGE BODY LILAM AS
             
             if l_response not in ('TIMEOUT', 'THROTTLED') AND l_response not like 'ERROR%' THEN
                 l_payload := JSON_QUERY(l_response, '$.payload');
-                v_rec.mon_steps_done  := extractFromJsonNum(l_payload, 'mon_steps_done');
+                v_rec.actions_count  := extractFromJsonNum(l_payload, 'actions_count');
                 v_rec.used_time  := extractFromJsonNum(l_payload, 'used_time');
                 v_rec.start_time  := extractFromJsonTime(l_payload, 'start_time');
                 v_rec.stop_time  := extractFromJsonTime(l_payload, 'stop_time');
@@ -1470,11 +1644,11 @@ create or replace PACKAGE BODY LILAM AS
         begin
             if is_remote(p_processId) then
                 v_rec := getLastMonitorEntryRemote(p_processId, p_actionName, p_contextName);
-                return v_rec.mon_steps_done;
+                return v_rec.actions_count;
             end if ;
 
             v_rec := getLastMonitorEntry(p_processId, p_actionName, p_contextName);
-            RETURN nvl(v_rec.mon_steps_done, 0);
+            RETURN nvl(v_rec.actions_count, 0);
         end;
         
         --------------------------------------------------------------------------
@@ -2522,12 +2696,13 @@ create or replace PACKAGE BODY LILAM AS
         
         --------------------------------------------------------------------------
         
-        procedure doRemote_markStep(p_message varchar2)
+        procedure doRemote_startTrace(p_message varchar2)
         as
             l_processId number;
             l_actionName varchar2(100);
             l_contextName varchar2(100);
             l_timestamp timestamp;
+            l_monType pls_integer;
             l_payload varchar2(1600);
         begin
             l_payload := JSON_QUERY(p_message, '$.payload');
@@ -2535,8 +2710,52 @@ create or replace PACKAGE BODY LILAM AS
             l_actionName := extractFromJsonStr(l_payload, 'action_name');
             l_contextName := extractFromJsonStr(l_payload, 'context_name');
             l_timestamp := extractFromJsonTime(l_payload, 'timestamp');
+            l_monType := extractFromJsonNum(l_payload, 'monitor_type');
             
-            write_to_monitor_buffer(l_processId, l_actionName, l_contextName, l_timestamp);
+            startTrace(l_processId, l_actionName, l_contextName, l_timestamp);
+        end;
+
+        --------------------------------------------------------------------------
+        
+        procedure doRemote_stopTrace(p_message varchar2)
+        as
+            l_processId number;
+            l_actionName varchar2(100);
+            l_contextName varchar2(100);
+            l_timestamp timestamp;
+            l_monType pls_integer;
+            l_payload varchar2(1600);
+        begin
+            l_payload := JSON_QUERY(p_message, '$.payload');
+            l_processId := extractFromJsonNum(l_payload, 'process_id');
+            l_actionName := extractFromJsonStr(l_payload, 'action_name');
+            l_contextName := extractFromJsonStr(l_payload, 'context_name');
+            l_timestamp := extractFromJsonTime(l_payload, 'timestamp');
+            l_monType := extractFromJsonNum(l_payload, 'monitor_type');
+            
+            writeTraceToMonitorBuffer(l_processId, l_actionName, l_contextName, l_timestamp);
+        end;
+
+        
+        --------------------------------------------------------------------------
+
+        procedure doRemote_markEvent(p_message varchar2)
+        as
+            l_processId number;
+            l_actionName varchar2(100);
+            l_contextName varchar2(100);
+            l_timestamp timestamp;
+            l_monType pls_integer;
+            l_payload varchar2(1600);
+        begin
+            l_payload := JSON_QUERY(p_message, '$.payload');
+            l_processId := extractFromJsonNum(l_payload, 'process_id');
+            l_actionName := extractFromJsonStr(l_payload, 'action_name');
+            l_contextName := extractFromJsonStr(l_payload, 'context_name');
+            l_timestamp := extractFromJsonTime(l_payload, 'timestamp');
+            l_monType := extractFromJsonNum(l_payload, 'monitor_type');
+            
+            writeEventToMonitorBuffer(l_processId, l_actionName, l_contextName, l_timestamp);
         end;
         
         --------------------------------------------------------------------------
@@ -2683,7 +2902,7 @@ create or replace PACKAGE BODY LILAM AS
             select json_object(
                 'process_id'        value v_rec.process_id,
                 'action_name'      value v_rec.action_name,
-                'mon_steps_done'         value v_rec.mon_steps_done,
+                'actions_count'         value v_rec.actions_count,
                 'used_time'     value v_rec.used_time,
                 'start_time'       value v_rec.start_time,
                 'stop_time'       value v_rec.stop_time,
@@ -3206,8 +3425,14 @@ create or replace PACKAGE BODY LILAM AS
                         WHEN 'GET_PROCESS_DATA' then
                             doRemote_getProcessData(l_clientChannel, l_message);
                             
-                        WHEN 'MARK_STEP' then
-                            doRemote_markStep(l_message);
+                        WHEN 'MARK_EVENT' then
+                            doRemote_markEvent(l_message);
+                            
+                        WHEN 'START_TRACE' then
+                            doRemote_startTrace(l_message);
+                            
+                        WHEN 'STOP_TRACE' then
+                            doRemote_stopTrace(l_message);
                             
                         WHEN 'GET_MONITOR_LAST_ENTRY' then
                             doRemote_getMonitorLastEntry(l_clientChannel, l_message);
@@ -3265,13 +3490,13 @@ create or replace PACKAGE BODY LILAM AS
                 l_request := extractClientRequest(l_message);
                 
                 -- Im Drain verarbeiten wir nur noch Log-Daten, keine neuen Sessions/Shutdowns
-                if l_request IN ('LOG_ANY', 'MARK_STEP', 'UNFREEZE_REQUEST') THEN
+                if l_request IN ('LOG_ANY', 'MARK_EVENT', 'UNFREEZE_REQUEST') THEN
                     CASE l_request
                         WHEN 'LOG_ANY' then
                             doRemote_logAny(l_message);
                             
-                        WHEN 'MARK_STEP' then
-                            doRemote_markStep(l_message);
+                        WHEN 'MARK_EVENT' then
+                            doRemote_markEvent(l_message);
                             
                         WHEN 'UNFREEZE_REQUEST' then
                             doRemote_unfreezeClient(l_clientChannel, l_message);
