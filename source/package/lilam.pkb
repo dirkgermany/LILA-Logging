@@ -28,10 +28,12 @@ create or replace PACKAGE BODY LILAM AS
         ---------------------------------------------------------------
         -- Placeholders for tables
         ---------------------------------------------------------------
-        C_PARAM_MASTER_TABLE              CONSTANT varchar2(20) := 'PH_MASTER_TABLE';
-        C_PARAM_DETAIL_TABLE              CONSTANT varchar2(20) := 'PH_DETAIL_TABLE';
-        C_SUFFIX_DETAIL_NAME              CONSTANT varchar2(16) := '_DETAIL';
-        C_LILAM_SERVER_REGISTRY           CONSTANT VARCHAR2(30) := 'LILAM_SERVER_REGISTRY';
+        C_PARAM_MASTER_TABLE            CONSTANT varchar2(20) := 'PH_MASTER_TABLE';
+        C_PARAM_LOG_TABLE               CONSTANT varchar2(20) := 'PH_LOG_TABLE';
+        C_PARAM_MON_TABLE               CONSTANT varchar2(20) := 'PH_MON_TABLE';
+        C_SUFFIX_LOG_TABLE              CONSTANT varchar2(16) := '_LOG';
+        C_SUFFIX_MON_TABLE              CONSTANT varchar2(16) := '_MON';
+        C_LILAM_SERVER_REGISTRY         CONSTANT VARCHAR2(30) := 'LILAM_SERVER_REGISTRY';
       
         ---------------------------------------------------------------
         -- Other general Parameters
@@ -95,9 +97,11 @@ create or replace PACKAGE BODY LILAM AS
         ---------------------------------------------------------------
         TYPE t_monitor_buffer_rec IS RECORD (
             process_id      NUMBER(19,0),
-            action_name     VARCHAR2(150),
+            action_name     VARCHAR2(100),
+            context_name    VARCHAR2(100),
             avg_action_time NUMBER,        -- Umbenannt
-            action_time     TIMESTAMP,     -- Startzeitpunkt der Aktion
+            start_time      TIMESTAMP,     -- Startzeitpunkt der Aktion
+            stop_time       TIMESTAMP,     -- Startzeitpunkt der Aktion
             used_time       NUMBER,        -- Dauer der letzten Ausführung (in Sek.)
             mon_steps_done  PLS_INTEGER := 0 -- Hilfsvariable für Durchschnittsberechnung
         );
@@ -522,10 +526,10 @@ create or replace PACKAGE BODY LILAM AS
     
         --------------------------------------------------------------------------
     
-        function replaceNameDetailTable(p_sqlStatement varchar2, p_placeHolder varchar2, p_tableName varchar2) return varchar2
+        function replaceNameDetailTable(p_sqlStatement varchar2, p_placeHolder varchar2, p_tableSuffix varchar2, p_tableName varchar2) return varchar2
         as
         begin
-            return replace(p_sqlStatement, p_placeHolder, p_tableName || C_SUFFIX_DETAIL_NAME);
+            return replace(p_sqlStatement, p_placeHolder, p_tableName || p_tableSuffix);
         end;
         
         --------------------------------------------------------------------------
@@ -570,10 +574,10 @@ create or replace PACKAGE BODY LILAM AS
                 run_sql(sqlStmt);
             end if ;
     
-            if not objectExists(p_TabNameMaster || C_SUFFIX_DETAIL_NAME, 'TABLE') then
+            if not objectExists(p_TabNameMaster || C_SUFFIX_LOG_TABLE, 'TABLE') then
                 -- Details table
                 sqlStmt := '
-                create table PH_DETAIL_TABLE (
+                create table PH_LOG_TABLE (
                     "PROCESS_ID"        number(19,0),
                     "NO"                number(19,0),
                     "INFO"              varchar2(2000),
@@ -583,14 +587,29 @@ create or replace PACKAGE BODY LILAM AS
                     "HOST_NAME"         varchar2(50),
                     "ERR_STACK"         varchar2(4000),
                     "ERR_BACKTRACE"     varchar2(4000),
-                    "ERR_CALLSTACK"     varchar2(4000),
-                    "MONITORING"        NUMBER(1,0) DEFAULT 0,
-                    "MON_ACTION"        VARCHAR2(100),
-                    "MON_USED_MILLIS"   NUMBER(19,0), -- Millis als Zahl für einfache Auswertung
-                    "MON_AVG_MILLIS"    NUMBER(19,0),
-                    "MON_STEPS_DONE"    NUMBER(19,0)
+                    "ERR_CALLSTACK"     varchar2(4000)
                 )';
-                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_DETAIL_TABLE, p_TabNameMaster);
+                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, p_TabNameMaster);
+                run_sql(sqlStmt);
+            end if ;
+    
+            if not objectExists(p_TabNameMaster || C_SUFFIX_MON_TABLE, 'TABLE') then
+                -- Details table
+                sqlStmt := '
+                create table PH_MON_TABLE (
+                    "PROCESS_ID"    number(19,0),
+                    "MON_TYPE"      number DEFAULT 0,
+                    "START_TIME"    timestamp  DEFAULT SYSTIMESTAMP,
+                    "STOP_TIME"     timestamp,
+                    "SESSION_USER"  varchar2(50),
+                    "HOST_NAME"     varchar2(50),
+                    "ACTION"        VARCHAR2(100),
+                    "CONTEXT"  VARCHAR2(100),
+                    "USED_MILLIS"   NUMBER(19,0), -- Millis als Zahl für einfache Auswertung
+                    "AVG_MILLIS"    NUMBER(19,0),
+                    "STEPS_DONE"    NUMBER(19,0)
+                )';
+                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_MON_TABLE, C_SUFFIX_MON_TABLE, p_TabNameMaster);
                 run_sql(sqlStmt);
             end if ;
     
@@ -614,19 +633,27 @@ create or replace PACKAGE BODY LILAM AS
                 run_sql(sqlStmt);
             end if ;
     
-            if not objectExists('idx_lilam_detail_master', 'INDEX') then
+            if not objectExists('idx_lilam_LOG_master', 'INDEX') then
                 sqlStmt := '
-                CREATE INDEX idx_lilam_detail_master
-                ON PH_DETAIL_TABLE (process_id)';
-                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_DETAIL_TABLE, p_TabNameMaster);
+                CREATE INDEX idx_lilam_LOG_master
+                ON PH_LOG_TABLE (process_id)';
+                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, p_TabNameMaster);
                 run_sql(sqlStmt);
             end if ;
     
-            if not objectExists('idx_lilam_detail_info', 'INDEX') then
+            if not objectExists('idx_lilam_mon_master', 'INDEX') then
                 sqlStmt := '
-                CREATE INDEX idx_lilam_detail_info
-                ON PH_DETAIL_TABLE (info)';
-                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_DETAIL_TABLE, p_TabNameMaster);
+                CREATE INDEX idx_lilam_mon_master
+                ON PH_MON_TABLE (process_id)';
+                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_MON_TABLE, C_SUFFIX_MON_TABLE, p_TabNameMaster);
+                run_sql(sqlStmt);
+            end if ;
+    
+            if not objectExists('idx_lilam_LOG_info', 'INDEX') then
+                sqlStmt := '
+                CREATE INDEX idx_lilam_LOG_info
+                ON PH_LOG_TABLE (info)';
+                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, p_TabNameMaster);
                 run_sql(sqlStmt);
             end if ;
     
@@ -687,9 +714,13 @@ create or replace PACKAGE BODY LILAM AS
                 fetch t_rc into processIdToDelete;
                 EXIT WHEN t_rc%NOTFOUND;
                 
-                -- delete Details first (integrity)
-                sqlStatement := 'delete from PH_DETAIL_TABLE where process_id = :1';
-                sqlStatement := replaceNameDetailTable(sqlStatement, C_PARAM_DETAIL_TABLE, sessionRec.tabName_master);
+                -- delete Logs and Monitor-entries first (integrity)
+                sqlStatement := 'delete from PH_LOG_TABLE where process_id = :1';
+                sqlStatement := replaceNameDetailTable(sqlStatement, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, sessionRec.tabName_master);
+                execute immediate sqlStatement USING processIdToDelete;
+        
+                sqlStatement := 'delete from PH_MON_TABLE where process_id = :1';
+                sqlStatement := replaceNameDetailTable(sqlStatement, C_PARAM_MON_TABLE, C_SUFFIX_MON_TABLE, sessionRec.tabName_master);
                 execute immediate sqlStatement USING processIdToDelete;
         
                 -- delete master
@@ -825,7 +856,7 @@ create or replace PACKAGE BODY LILAM AS
             end if ;
             -- 2. Ziel-Tabelle aus der Session-Liste ermitteln
             v_idx_session := v_indexSession(p_processId);
-            v_targetTable := g_sessionList(v_idx_session).tabName_master || C_SUFFIX_DETAIL_NAME;
+            v_targetTable := g_sessionList(v_idx_session).tabName_master || C_SUFFIX_LOG_TABLE;
         
             -- 3. Daten aus der hierarchischen Map in flache Listen sammeln
             for i in 1 .. g_log_groups(v_key).COUNT loop
@@ -918,10 +949,12 @@ create or replace PACKAGE BODY LILAM AS
             p_processId    number,
             p_target_table varchar2,
             p_actions      sys.odcivarchar2list,
+            p_contexts      sys.odcivarchar2list,
             p_mon_steps_done   sys.odcinumberlist,
             p_used         sys.odcinumberlist,
             p_avgs         sys.odcinumberlist,
-            p_times        sys.odcidatelist
+            p_timesStart        sys.odcidatelist,
+            p_timesStop        sys.odcidatelist
         )
         as
             pragma autonomous_transaction;
@@ -936,10 +969,10 @@ create or replace PACKAGE BODY LILAM AS
                 forall i in 1 .. p_actions.count SAVE EXCEPTIONS
                     execute immediate
                     'insert into ' || v_safe_table || ' 
-                    (PROCESS_ID, MON_ACTION, MON_STEPS_DONE, MON_USED_MILLIS, MON_AVG_MILLIS, SESSION_TIME, MONITORING, SESSION_USER, HOST_NAME)
-                    values (:1, :2, :3, :4, :5, :6, 1, :7, :8)'
-                    using p_processId, p_actions(i), p_mon_steps_done(i), p_used(i), p_avgs(i), p_times(i),
-                          v_user, v_host;
+                    (PROCESS_ID, ACTION, CONTEXT, STEPS_DONE, USED_MILLIS, AVG_MILLIS, START_TIME, STOP_TIME, SESSION_USER, HOST_NAME)
+                    values (:1, :2, :3, :4, :5, :6, :7, :8, :9, :10)'
+                    using p_processId, p_actions(i), p_contexts(i), p_mon_steps_done(i), p_used(i), p_avgs(i), p_timesStart(i),
+                          p_timesStop(i), v_user, v_host;
                 
                 commit;
             end if ;
@@ -947,9 +980,9 @@ create or replace PACKAGE BODY LILAM AS
             when others then
                 rollback;
                 -- Fehler-Logging hier sinnvoll, da autonome Transaktion den Fehler sonst "verschluckt"
-                if should_raise_error(p_processId) then
+--                if should_raise_error(p_processId) then
                     raise;
-                end if ;
+--                end if ;
         end;
         
         --------------------------------------------------------------------
@@ -1033,13 +1066,15 @@ create or replace PACKAGE BODY LILAM AS
             v_keep_rec    t_monitor_buffer_rec;
         
             v_actions     sys.odcivarchar2list := sys.odcivarchar2list();
+            v_contexts    sys.odcivarchar2list := sys.odcivarchar2list();
             v_mon_steps_done  sys.odcinumberlist   := sys.odcinumberlist();
             v_used        sys.odcinumberlist   := sys.odcinumberlist();
             v_avgs        sys.odcinumberlist   := sys.odcinumberlist();
-            v_times       sys.odcidatelist     := sys.odcidatelist();
+            v_timesStart  sys.odcidatelist     := sys.odcidatelist();
+            v_timesStop   sys.odcidatelist     := sys.odcidatelist();
         begin
             v_idx_session := v_indexSession(p_processId);
-            v_targetTable := g_sessionList(v_idx_session).tabName_master || C_SUFFIX_DETAIL_NAME;
+            v_targetTable := g_sessionList(v_idx_session).tabName_master || C_SUFFIX_MON_TABLE;
         
             v_group_key := g_monitor_groups.FIRST;
             while v_group_key is not null loop     
@@ -1048,10 +1083,12 @@ create or replace PACKAGE BODY LILAM AS
                     -- 1. Alles einsammeln, was aktuell im Eimer ist
                         for i in 1 .. g_monitor_groups(v_group_key).COUNT loop
                             v_actions.extend;    v_actions(v_actions.last)    := g_monitor_groups(v_group_key)(i).action_name;
+                            v_contexts.extend;    v_contexts(v_contexts.last)    := g_monitor_groups(v_group_key)(i).context_name;
                             v_mon_steps_done.extend; v_mon_steps_done(v_mon_steps_done.last) := g_monitor_groups(v_group_key)(i).mon_steps_done;
                             v_used.extend;       v_used(v_used.last)          := g_monitor_groups(v_group_key)(i).used_time;
                             v_avgs.extend;       v_avgs(v_avgs.last)          := g_monitor_groups(v_group_key)(i).avg_action_time;
-                            v_times.extend;      v_times(v_times.last)         := cast(g_monitor_groups(v_group_key)(i).action_time as date);
+                            v_timesStart.extend;      v_timesStart(v_timesStart.last) := cast(g_monitor_groups(v_group_key)(i).start_time as date);
+                            v_timesStop.extend;      v_timesStop(v_timesStop.last)  := cast(g_monitor_groups(v_group_key)(i).stop_time as date);
                         end loop;
             
                     -- 3. Radikaler Kahlschlag im RAM (SGA/PGA Hygiene)
@@ -1067,10 +1104,12 @@ create or replace PACKAGE BODY LILAM AS
                     p_processId    => p_processId,
                     p_target_table => v_targetTable,
                     p_actions      => v_actions,
+                    p_contexts     => v_contexts,
                     p_mon_steps_done   => v_mon_steps_done,
                     p_used         => v_used,
                     p_avgs         => v_avgs,
-                    p_times        => v_times
+                    p_timesStart   => v_timesStart,
+                    p_timesStop    => v_timesStop
                 );
                 g_sessionList(v_idx_session).monitor_dirty_count := 0;
             end if ;
@@ -1124,11 +1163,11 @@ create or replace PACKAGE BODY LILAM AS
         --------------------------------------------------------------------------
         -- Hilfsfunktion (intern): Erzeugt den einheitlichen Key für den Index
         --------------------------------------------------------------------------
-        FUNCTION buildMonitorKey(p_processId NUMBER, p_actionName VARCHAR2) RETURN VARCHAR2 AS
+        FUNCTION buildMonitorKey(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2) RETURN VARCHAR2 AS
         BEGIN
             -- Format: "0000000000000000180|MEINE_AKTION"
             -- LPAD sorgt für eine feste Länge, was das Filtern extrem beschleunigt
-            RETURN LPAD(p_processId, 20, '0') || '|' || p_actionName;
+            RETURN LPAD(p_processId, 20, '0') || '|' || p_actionName || '|' || p_contextName;
         END;
         --------------------------------------------------------------------------
         -- Calculation average time used
@@ -1210,7 +1249,7 @@ create or replace PACKAGE BODY LILAM AS
         --------------------------------------------------------------------------
         -- Creating and adding/updating a record in the monitor list
         --------------------------------------------------------------------------    
-        procedure insertMonitorRemote(p_processId number, p_actionName varchar2, p_timestamp timestamp default systimestamp)
+        procedure insertMonitorRemote(p_processId number, p_actionName varchar2, p_contextName varchar2, p_timestamp timestamp default systimestamp)
         as
             l_payload varchar2(32767); -- Puffer für den JSON-String
         begin
@@ -1221,6 +1260,7 @@ create or replace PACKAGE BODY LILAM AS
             select json_object(
                 'process_id'    value p_processId,
                 'action_name'   value p_actionName,
+                'context_name'  value p_contextName,
                 'timestamp'     value p_timestamp
                 returning varchar2
             )
@@ -1237,10 +1277,10 @@ create or replace PACKAGE BODY LILAM AS
         
         --------------------------------------------------------------------------
         
-        procedure write_to_monitor_buffer (p_processId number, p_actionName varchar2, p_timestamp timestamp)
+        procedure write_to_monitor_buffer (p_processId number, p_actionName varchar2, p_contextName varchar2, p_timestamp timestamp)
         as
             -- Key-Präfix sollte idealerweise p_processId enthalten für schnelleren Flush-Zugriff
-            v_key        constant varchar2(100) := buildMonitorKey(p_processId, p_actionName);
+            v_key        constant varchar2(200) := buildMonitorKey(p_processId, p_actionName, p_contextName);
             v_now        timestamp;
             v_used_time  number := 0;
             v_new_avg    number := 0;
@@ -1254,7 +1294,7 @@ create or replace PACKAGE BODY LILAM AS
             l_prev       t_monitor_buffer_rec; 
         begin
             if is_remote(p_processId) then
-                insertMonitorRemote(p_processId, p_actionName, p_timestamp);
+                insertMonitorRemote(p_processId, p_actionName, p_contextName, p_timestamp);
                 return;
             end if ;
     
@@ -1276,7 +1316,7 @@ create or replace PACKAGE BODY LILAM AS
             if g_monitor_shadows.EXISTS(v_key) then            -- Es gibt einen Vorgänger
                 l_prev := g_monitor_shadows(v_key);
                 g_monitor_groups(v_key)(l_new_idx).mon_steps_done      := l_prev.mon_steps_done + 1;
-                g_monitor_groups(v_key)(l_new_idx).used_time       := get_ms_diff(l_prev.action_time, v_now);
+                g_monitor_groups(v_key)(l_new_idx).used_time       := get_ms_diff(l_prev.start_time, v_now);
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := calculate_avg(
                                                                         l_prev.avg_action_time, 
                                                                         g_monitor_groups(v_key)(l_new_idx).mon_steps_done, 
@@ -1289,9 +1329,10 @@ create or replace PACKAGE BODY LILAM AS
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := 0;
             end if ;
             
-            g_monitor_groups(v_key)(l_new_idx).process_id  := p_processId;
-            g_monitor_groups(v_key)(l_new_idx).action_name := p_actionName;
-            g_monitor_groups(v_key)(l_new_idx).action_time := v_now;
+            g_monitor_groups(v_key)(l_new_idx).process_id   := p_processId;
+            g_monitor_groups(v_key)(l_new_idx).action_name  := p_actionName;
+            g_monitor_groups(v_key)(l_new_idx).context_name := p_contextName;
+            g_monitor_groups(v_key)(l_new_idx).start_time  := v_now;
             
             g_monitor_shadows(v_key) := g_monitor_groups(v_key)(g_monitor_groups(v_key).LAST);         
             
@@ -1312,9 +1353,9 @@ create or replace PACKAGE BODY LILAM AS
         --------------------------------------------------------------------------
         -- Removing a record from monitor list
         --------------------------------------------------------------------------
-        procedure removeMonitor(p_processId number, p_actionName varchar2)
+        procedure removeMonitor(p_processId number, p_actionName varchar2, p_contextName varchar2)
         as
-            v_key constant varchar2(100) := buildMonitorKey(p_processId, p_actionName);
+            v_key constant varchar2(200) := buildMonitorKey(p_processId, p_actionName, p_contextName);
         begin
             -- 1. Historie löschen
             if g_monitor_groups.EXISTS(v_key) then
@@ -1325,9 +1366,9 @@ create or replace PACKAGE BODY LILAM AS
         --------------------------------------------------------------------------
         -- Removing a record from monitor list
         --------------------------------------------------------------------------
-        function getLastMonitorEntry(p_processId number, p_actionName varchar2) return t_monitor_buffer_rec
+        function getLastMonitorEntry(p_processId number, p_actionName varchar2, p_contextName varchar2) return t_monitor_buffer_rec
         as
-            v_key    constant varchar2(100) := buildMonitorKey(p_processId, p_actionName);
+            v_key    constant varchar2(200) := buildMonitorKey(p_processId, p_actionName, p_contextName);
             v_empty  t_monitor_buffer_rec; -- Initial leerer Record als Fallback
         begin
             -- 1. Prüfen, ob die Gruppe (Action) im Cache existiert
@@ -1353,9 +1394,9 @@ create or replace PACKAGE BODY LILAM AS
     
         ----------------------------------------------------------------------
         
-        function hasMonitorEntry(p_processId number, p_actionName varchar2) return boolean
+        function hasMonitorEntry(p_processId number, p_actionName varchar2, p_contextName varchar2) return boolean
         is
-            v_key constant varchar2(100) := buildMonitorKey(p_processId, p_actionName);
+            v_key constant varchar2(200) := buildMonitorKey(p_processId, p_actionName, p_contextName);
         begin
             if not g_monitor_groups.EXISTS(v_key) then
                 return false;
@@ -1373,14 +1414,14 @@ create or replace PACKAGE BODY LILAM AS
         --------------------------------------------------------------------------
         -- Monitoring a step
         --------------------------------------------------------------------------
-        PROCEDURE MARK_STEP(p_processId NUMBER, p_actionName VARCHAR2, p_timestamp timestamp default NULL)
+        PROCEDURE MARK_STEP(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2, p_timestamp timestamp default NULL)
         as
         begin
-            write_to_monitor_buffer (p_processId, p_actionName, p_timestamp);     
+            write_to_monitor_buffer (p_processId, p_actionName, p_contextName, p_timestamp);     
         end;
         --------------------------------------------------------------------------
         
-        function getLastMonitorEntryRemote(p_processId number, p_actionName varchar2) return t_monitor_buffer_rec
+        function getLastMonitorEntryRemote(p_processId number, p_actionName varchar2, p_contextName varchar2) return t_monitor_buffer_rec
         as
             l_response varchar2(1000);
             l_payload  varchar2(1000);
@@ -1388,7 +1429,8 @@ create or replace PACKAGE BODY LILAM AS
         begin
             select json_object(
                 'process_id'   value p_processId,
-                'action_name'  value p_actionName
+                'action_name'  value p_actionName,
+                'context_name' value p_contextName
                 returning varchar2
             )
             into l_payload from dual;  
@@ -1398,7 +1440,8 @@ create or replace PACKAGE BODY LILAM AS
                 l_payload := JSON_QUERY(l_response, '$.payload');
                 v_rec.mon_steps_done  := extractFromJsonNum(l_payload, 'mon_steps_done');
                 v_rec.used_time  := extractFromJsonNum(l_payload, 'used_time');
-                v_rec.action_time  := extractFromJsonTime(l_payload, 'action_time');
+                v_rec.start_time  := extractFromJsonTime(l_payload, 'start_time');
+                v_rec.stop_time  := extractFromJsonTime(l_payload, 'stop_time');
                 v_rec.avg_action_time  := extractFromJsonNum(l_payload, 'avg_action_time');
             end if;
             return v_rec;
@@ -1406,31 +1449,31 @@ create or replace PACKAGE BODY LILAM AS
         
         --------------------------------------------------------------------------
     
-        FUNCTION GET_METRIC_AVG_DURATION(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER
+        FUNCTION GET_METRIC_AVG_DURATION(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2) return NUMBER
         as
             v_rec t_monitor_buffer_rec;
         begin
             if is_remote(p_processId) then
-                v_rec := getLastMonitorEntryRemote(p_processId, p_actionName);
+                v_rec := getLastMonitorEntryRemote(p_processId, p_actionName, p_contextName);
                 return v_rec.avg_action_time;
             end if ;
             
-            v_rec := getLastMonitorEntry(p_processId, p_actionName);
+            v_rec := getLastMonitorEntry(p_processId, p_actionName, p_contextName);
             RETURN nvl(v_rec.avg_action_time, 0);
         end;
         
         --------------------------------------------------------------------------
     
-        FUNCTION GET_METRIC_STEPS(p_processId NUMBER, p_actionName VARCHAR2) return NUMBER
+        FUNCTION GET_METRIC_STEPS(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2) return NUMBER
         as
             v_rec t_monitor_buffer_rec;
         begin
             if is_remote(p_processId) then
-                v_rec := getLastMonitorEntryRemote(p_processId, p_actionName);
+                v_rec := getLastMonitorEntryRemote(p_processId, p_actionName, p_contextName);
                 return v_rec.mon_steps_done;
             end if ;
 
-            v_rec := getLastMonitorEntry(p_processId, p_actionName);
+            v_rec := getLastMonitorEntry(p_processId, p_actionName, p_contextName);
             RETURN nvl(v_rec.mon_steps_done, 0);
         end;
         
@@ -1608,9 +1651,9 @@ create or replace PACKAGE BODY LILAM AS
                 end if ;
                 sqlCursor := null;
                 rollback;
---                if should_raise_error(p_processId) then
+                if should_raise_error(p_processId) then
                     RAISE;
---                end if ;
+                end if ;
         end;
     
         --------------------------------------------------------------------------
@@ -2483,15 +2526,17 @@ create or replace PACKAGE BODY LILAM AS
         as
             l_processId number;
             l_actionName varchar2(100);
+            l_contextName varchar2(100);
             l_timestamp timestamp;
             l_payload varchar2(1600);
         begin
             l_payload := JSON_QUERY(p_message, '$.payload');
             l_processId := extractFromJsonNum(l_payload, 'process_id');
             l_actionName := extractFromJsonStr(l_payload, 'action_name');
+            l_contextName := extractFromJsonStr(l_payload, 'context_name');
             l_timestamp := extractFromJsonTime(l_payload, 'timestamp');
             
-            write_to_monitor_buffer(l_processId, l_actionName, l_timestamp);
+            write_to_monitor_buffer(l_processId, l_actionName, l_contextName, l_timestamp);
         end;
         
         --------------------------------------------------------------------------
@@ -2625,20 +2670,23 @@ create or replace PACKAGE BODY LILAM AS
             v_rec t_monitor_buffer_rec;
             l_status PLS_INTEGER;
             l_actionName varchar2(50);
+            l_contextName varchar2(50);
             l_header varchar2(200);
             l_meta   varchar2(200);
             l_msg    varchar2(2000);
         begin
             l_processId := extractFromJsonNum(l_message, 'payload.process_id');
             l_actionName := extractFromJsonStr(l_message, 'payload.action_name');
+            l_contextName := extractFromJsonStr(l_message, 'payload.context_name');
             
-            v_rec := getLastMonitorEntry(l_processId, l_actionName);   
+            v_rec := getLastMonitorEntry(l_processId, l_actionName, l_contextName);   
             select json_object(
                 'process_id'        value v_rec.process_id,
                 'action_name'      value v_rec.action_name,
                 'mon_steps_done'         value v_rec.mon_steps_done,
                 'used_time'     value v_rec.used_time,
-                'action_time'       value v_rec.action_time,
+                'start_time'       value v_rec.start_time,
+                'stop_time'       value v_rec.stop_time,
                 'avg_action_time'       value v_rec.avg_action_time
                 returning varchar2
             )
@@ -2844,6 +2892,8 @@ create or replace PACKAGE BODY LILAM AS
             return server_new_session(l_payload);
         end;
         
+        --------------------------------------------------------------------------
+
         FUNCTION SERVER_NEW_SESSION(p_jasonString varchar2) RETURN NUMBER
         as
             l_ProcessId number(19,0) := -500;   
