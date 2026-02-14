@@ -1177,7 +1177,7 @@ create or replace PACKAGE BODY LILAM AS
         --------------------------------------------------------------------------
         FUNCTION buildMonitorKey(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2) RETURN VARCHAR2 AS
         BEGIN
-            -- Format: "0000000000000000180|MEINE_AKTION"
+            -- Format: "0000000000000000180|MEINE_AKTION|MEIN_CONTEXT"
             -- LPAD sorgt für eine feste Länge, was das Filtern extrem beschleunigt
             RETURN LPAD(p_processId, 20, '0') || '|' || p_actionName || '|' || p_contextName;
         END;
@@ -1211,6 +1211,8 @@ create or replace PACKAGE BODY LILAM AS
         procedure raise_alert(
             p_processId number, 
             p_action varchar2,
+            p_context_name varchar2,
+            p_mon_type PLS_INTEGER,
             p_step PLS_INTEGER,
             p_used_time number,
             p_expected number
@@ -1218,7 +1220,7 @@ create or replace PACKAGE BODY LILAM AS
         as
             l_msg VARCHAR2(4000);
         begin
-            l_msg := 'PERFORMANCE ALERT: ' || p_action || ' - Step: ' || p_step || 
+            l_msg := 'PERFORMANCE ALERT: Process_ID=>' || p_processId || '; Action=>' || p_action || '; Context=>' || p_context_name || '; Step=>' || p_step || 
                      ' used ' || p_used_time || 'ms (expected: ' || p_expected || 'ms)';
                      
             -- Log to Buffer
@@ -1249,6 +1251,8 @@ create or replace PACKAGE BODY LILAM AS
                     raise_alert(
                         p_processId => p_processId,
                         p_action    => p_monitor_rec.action_name,
+                        p_context_name => p_monitor_rec.context_name,
+                        p_mon_type  => p_monitor_rec.monitor_type,
                         p_step      => p_monitor_rec.actions_count,
                         p_used_time => p_monitor_rec.used_time,
                         p_expected  => p_monitor_rec.avg_action_time
@@ -1346,14 +1350,6 @@ create or replace PACKAGE BODY LILAM AS
         as
             -- Key-Präfix sollte idealerweise p_processId enthalten für schnelleren Flush-Zugriff
             v_key        constant varchar2(200) := buildMonitorKey(p_processId, p_actionName, p_contextName);
-            v_now        timestamp;
-            v_used_time  number := 0;
-            v_new_avg    number := 0;
-            v_new_count  PLS_INTEGER := 1;
---            v_new_rec    t_monitor_buffer_rec;
-            v_first_idx  PLS_INTEGER;
-            
-            l_prev_idx   PLS_INTEGER;
             l_new_idx    PLS_INTEGER;
             v_idx        PLS_INTEGER;
             l_prev       t_monitor_buffer_rec; 
@@ -1368,9 +1364,7 @@ create or replace PACKAGE BODY LILAM AS
                logLevelMonitor > g_sessionList(v_indexSession(p_processId)).log_level then
                 return;
             end if ;
-    
-            v_now := nvl(p_timestamp, systimestamp);
-    
+        
             if NOT g_monitor_groups.EXISTS(v_key) THEN
                 g_monitor_groups(v_key) := t_monitor_history_tab();
             end if ;
@@ -1381,7 +1375,7 @@ create or replace PACKAGE BODY LILAM AS
             if g_monitor_shadows.EXISTS(v_key) then            -- Es gibt einen Vorgänger
                 l_prev := g_monitor_shadows(v_key);
                 g_monitor_groups(v_key)(l_new_idx).actions_count      := l_prev.actions_count + 1;
-                g_monitor_groups(v_key)(l_new_idx).used_time       := get_ms_diff(l_prev.start_time, v_now);
+                g_monitor_groups(v_key)(l_new_idx).used_time       := get_ms_diff(l_prev.start_time, nvl(p_timestamp, systimestamp));
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := calculate_avg(
                                                                         l_prev.avg_action_time, 
                                                                         g_monitor_groups(v_key)(l_new_idx).actions_count, 
@@ -1397,7 +1391,8 @@ create or replace PACKAGE BODY LILAM AS
             g_monitor_groups(v_key)(l_new_idx).process_id   := p_processId;
             g_monitor_groups(v_key)(l_new_idx).action_name  := p_actionName;
             g_monitor_groups(v_key)(l_new_idx).context_name := p_contextName;
-            g_monitor_groups(v_key)(l_new_idx).start_time  := v_now;
+            g_monitor_shadows(v_key).monitor_type           := C_MON_TYPE_EVENT;
+            g_monitor_groups(v_key)(l_new_idx).start_time   := nvl(p_timestamp, systimestamp);
             
             g_monitor_shadows(v_key) := g_monitor_groups(v_key)(g_monitor_groups(v_key).LAST);         
             
@@ -1429,7 +1424,7 @@ create or replace PACKAGE BODY LILAM AS
 
             g_monitor_shadows(v_key).start_time := nvl(p_timestamp, systimestamp);
             g_monitor_shadows(v_key).stop_time := null;
-            g_monitor_shadows(v_key).monitor_type := 1; -- Trace
+            g_monitor_shadows(v_key).monitor_type := C_MON_TYPE_TRACE;
             g_monitor_shadows(v_key).action_name := p_actionName;
             g_monitor_shadows(v_key).context_name := p_contextName;
             
@@ -1491,7 +1486,9 @@ create or replace PACKAGE BODY LILAM AS
             g_monitor_groups(v_key).EXTEND;
             g_monitor_groups(v_key)(g_monitor_groups(v_key).LAST) := v_new_rec;
             
-            g_monitor_shadows.delete(v_key);         
+            g_monitor_shadows.delete(v_key);
+            
+            g_monitor_averages(v_key) := v_new_rec;
             
             v_idx := v_indexSession(p_processId);            
 --            validateDurationInAverage(p_processId, g_monitor_groups(v_key)(l_new_idx));
@@ -2111,14 +2108,7 @@ create or replace PACKAGE BODY LILAM AS
                 );
             end if ;
     
-            if p_level = logLevelError then
-                -- in case of an error, performace is not the
-                -- first problem of the parent process 
-                SYNC_ALL_DIRTY(true);
-           
-            else
-                sync_all_dirty;
-            end if ;
+            sync_all_dirty;
             
         exception
             when others then
@@ -2428,12 +2418,14 @@ create or replace PACKAGE BODY LILAM AS
             v_search_prefix CONSTANT VARCHAR2(50) := LPAD(p_processId, 20, '0') || '|';
             v_key           VARCHAR2(100);
             v_next_key      VARCHAR2(100);
+            v_msg           VARCHAR2(500);
         BEGIN
     
             -- A) MONITOR-DATEN & CACHES RÄUMEN
             -- Wir nutzen den sicheren Loop (Sichern vor Löschen)
             v_key := g_monitor_groups.FIRST;
             WHILE v_key IS NOT NULL LOOP
+                EXIT WHEN SUBSTR(v_key, 1, 20) > LPAD(p_processId, 20, '0');
                 v_next_key := g_monitor_groups.NEXT(v_key);
                 
                 if v_key LIKE v_search_prefix || '%' THEN
@@ -2470,12 +2462,47 @@ create or replace PACKAGE BODY LILAM AS
                 -- Wir starten am Anfang der Schatten-Map
             v_key := g_monitor_shadows.FIRST;   
             WHILE v_key IS NOT NULL LOOP
-                -- Wenn der Key zu diesem Prozess gehört, löschen wir den Eintrag
+                EXIT WHEN SUBSTR(v_key, 1, 20) > LPAD(p_processId, 20, '0');
                 if v_key LIKE v_search_prefix || '%' THEN
                     g_monitor_shadows.DELETE(v_key);
                     -- Optional: DBMS_OUTPUT.PUT_LINE('Shadow gelöscht für: ' || v_key);
                 end if ;            
                 -- Zum nächsten Key springen
+                v_key := g_monitor_shadows.NEXT(v_key);
+            END LOOP;
+            
+            -- G) Durchschnittswerte löschen
+            v_key := g_monitor_averages.FIRST;
+            WHILE v_key IS NOT NULL LOOP
+                EXIT WHEN SUBSTR(v_key, 1, 20) > LPAD(p_processId, 20, '0');
+                if v_key LIKE v_search_prefix || '%' THEN
+                    g_monitor_averages.DELETE(v_key);
+                end if ;            
+                v_key := g_monitor_averages.NEXT(v_key);
+            END LOOP;
+
+            -- Offene Traces (Shadows) prüfen, bevor sie gelöscht werden
+            -- Wenn offen, wird eine Warnung gelogged
+            v_key := g_monitor_shadows.FIRST;
+            WHILE v_key IS NOT NULL LOOP
+                EXIT WHEN SUBSTR(v_key, 1, 20) > LPAD(p_processId, 20, '0');
+                
+                IF SUBSTR(v_key, 1, 21) = v_search_prefix THEN
+                    -- HIER: Alert-Logik einbauen
+                    v_msg := 'OPEN TRACE ALERT (Trace purged): Process_ID=>' || p_processId || '; Action=>' || g_monitor_shadows(v_key).action_name ||
+                    '; Context=>' || g_monitor_shadows(v_key).context_name || '; Start=>' || g_monitor_shadows(v_key).start_time;                     
+                    -- Log to Buffer
+                    write_to_log_buffer(
+                        p_processId, 
+                        logLevelWarn,
+                        v_msg,
+                        null,
+                        null,
+                        null
+                    );
+
+                    g_monitor_shadows.DELETE(v_key);
+                END IF;
                 v_key := g_monitor_shadows.NEXT(v_key);
             END LOOP;
             
@@ -2552,14 +2579,12 @@ create or replace PACKAGE BODY LILAM AS
                 g_dirty_queue(p_processId) := TRUE;
                 SYNC_ALL_DIRTY(true);
     
-    --            if  logLevelSilent <= g_sessionList(v_indexSession(p_processId)).log_level then
-                    v_idx := v_indexSession(p_processId);
-                    persist_close_session(p_processId,  g_sessionList(v_idx).tabName_master, p_procStepsToDo, p_procStepsDone, p_processInfo, p_status);
+            v_idx := v_indexSession(p_processId);
+            persist_close_session(p_processId,  g_sessionList(v_idx).tabName_master, p_procStepsToDo, p_procStepsDone, p_processInfo, p_status);
             checkLogsBuffer(p_processId, 'vor clearAllSessionData');
-                    clearAllSessionData(p_processId);
+            clearAllSessionData(p_processId);
             checkLogsBuffer(p_processId, 'nach clearAllSessionData');
     
-    --            end if ;
             end if ;
         end;
     
