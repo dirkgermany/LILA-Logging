@@ -1374,7 +1374,7 @@ create or replace PACKAGE BODY LILAM AS
             -- Die nächsten Werte abhängig davon ob es einen Vorgänger gibt
             if g_monitor_shadows.EXISTS(v_key) then            -- Es gibt einen Vorgänger
                 l_prev := g_monitor_shadows(v_key);
-                g_monitor_groups(v_key)(l_new_idx).actions_count      := l_prev.actions_count + 1;
+                g_monitor_groups(v_key)(l_new_idx).actions_count   := l_prev.actions_count + 1;
                 g_monitor_groups(v_key)(l_new_idx).used_time       := get_ms_diff(l_prev.start_time, nvl(p_timestamp, systimestamp));
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := calculate_avg(
                                                                         l_prev.avg_action_time, 
@@ -1383,15 +1383,16 @@ create or replace PACKAGE BODY LILAM AS
                                                                       );
             ELSE
                 -- Erster Eintrag der Session/Action
-                g_monitor_groups(v_key)(l_new_idx).actions_count      := 1;
+                g_monitor_groups(v_key)(l_new_idx).actions_count   := 1;
                 g_monitor_groups(v_key)(l_new_idx).used_time       := 0; -- Erster Marker hat keine Dauer
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := 0;
+                g_monitor_groups(v_key)(l_new_idx).monitor_type    := C_MON_TYPE_EVENT;
             end if ;
             
             g_monitor_groups(v_key)(l_new_idx).process_id   := p_processId;
             g_monitor_groups(v_key)(l_new_idx).action_name  := p_actionName;
             g_monitor_groups(v_key)(l_new_idx).context_name := p_contextName;
-            g_monitor_shadows(v_key).monitor_type           := C_MON_TYPE_EVENT;
+            g_monitor_groups(v_key)(l_new_idx).monitor_type := C_MON_TYPE_EVENT;
             g_monitor_groups(v_key)(l_new_idx).start_time   := nvl(p_timestamp, systimestamp);
             
             g_monitor_shadows(v_key) := g_monitor_groups(v_key)(g_monitor_groups(v_key).LAST);         
