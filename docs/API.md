@@ -37,6 +37,7 @@
     - [START_SERVER](#procedure-start_server)
     - [SERVER_SHUTDOWN](#procedure-server_shutdown)
     - [GET_SERVER_PIPE](#function-get_server_pipe)
+    - [SERVER_UPDATE_RULES](#procedure-server_update_rules)
   - [Appendix](#appendix)
     - [Log Level](#log-level)
         - [Declaration of Log Levels](#declaration-of-log-levels)
