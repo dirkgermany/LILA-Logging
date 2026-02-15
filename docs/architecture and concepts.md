@@ -51,12 +51,22 @@ LILAM has one exception, the **Metric Level**: In the hierarchy, this level sits
 
 A different log level can be selected for each process.
 
-## Metrics
-Metrics are detailed process steps in terms of count and duration. There can be any number of actions per process. Each action is given a name and can occur multiple times within the process. Every occurrence of an action is logged. In this way, the number and the time spans between the occurrences of actions of the same name can be measured. 
-Furthermore, the average time span per action is measured and recorded at the respective last entry.
+## **Metrics**
+LILAM captures detailed process steps by measuring their **frequency** and **duration**. A process can contain any number of named actions, each occurring multiple times. 
 
-This might have been explained a bit complicatedly, so here is an example: 
-The process knows actions 'A' and 'B'. Action 'A' is reported several times, action 'B' is reported several times. Totals and time histories for 'A' and 'B' are registered separately.
+### **Two Ways of Monitoring:**
+*   **Discrete Events (`MARK_EVENT`):** Records a point-in-time milestone. LILAM measures the time spans between consecutive occurrences of the same action.
+*   **Transaction Tracing (`TRACE`):** Measures the specific duration of a work step from start to finish.
+
+### **Analysis & Outliers:**
+For every action, LILAM maintains a **moving average**. This average is recorded with each new entry, allowing for real-time performance tracking. If a trace significantly deviates from this baseline, LILAM generates a **warning** in the Log Table.
+
+**Example:**
+A process monitors actions **'A'** and **'B'**:
+*   Action **'A'** is reported several times as a milestone. LILAM tracks the count and the intervals between these events.
+*   Action **'B'** is a timed transaction (Trace). LILAM tracks the exact duration of each 'B' execution.
+*   **Results:** Totals, time histories, and averages for 'A' and 'B' are managed independently, providing a clear picture of process stability.
+
 
 ## Operating Modes
 LILAM features two operating modes that applications can use. It is possible to address these modes in parallel from within an application—I call this 'hybrid usage.'
@@ -80,7 +90,7 @@ This would turn LILAM Client 'A' into a producer, the LILAM Server into a dispat
 With the possibility of using several LILAM Servers in parallel and simultaneously allowing individual clients to speak with multiple LILAM Servers (and additionally integrating LILAM as a library), the use of LILAM is conceivable in a wide variety of scenarios. Load balancing, separation of mission-critical and less critical applications, division into departments or teams, multi-tenancy...
 
 ## Tables
-A total of three tables are required for operation and user data, one of which serves solely for the internal synchronization of multiple LILAM servers (more on this later). The detailed structure of these tables is described in the README file of the LILAM project on GitHub.
+A total of four tables are required for operation and user data, one of which serves solely for the internal synchronization of multiple LILAM servers (more on this later). The detailed structure of these tables is described in the README file of the LILAM project on GitHub.
 
 ### Master or Process Table
 The process table, also known as the master table, represents the processes. For each process, exactly one entry exists in this master table. During the lifecycle of a process, this data may change—especially the counter for completed process steps (i.e., the work progress). Additional information includes the currently used log level for this process, the name of the process, the timestamps for process start, last reported update, and completion. Another important piece of data is the Session ID, which is used for management.
@@ -89,17 +99,15 @@ The number of planned steps as well as the steps already completed are controlle
 
 **The name of the master table can be chosen freely—within the scope of Oracle naming rules.** By default, the master table is named 'LILAM_LOG'.
 
-### Detail Table
-The detail table is where log entries and metrics are found. For each process, any number of logs and metrics can exist. The reference for this data is the Process ID from the master table.
+### Log Table
+Stores chronological entries including timestamps, severity levels, and detailed metadata (user, host, call/error stacks), all linked via the Master Table's Process ID.
 
-The detail table is divided into two areas. One area contains the log messages with timestamps, severity, info text, user, platform, and—depending on the severity—the call stack and the error call stack (the stacks are automatically determined by LILAM; the application developer does not need to worry about this).
-> Log entries are created through the corresponding API calls (lilam.error, lilam.warn, lilam.info, lilam.debug).
+The name of the log table is always based on the name of the master table. It consists of the name of the master table plus an attached '_LOG' suffix.
+Meaning: If the master table is named 'LILAM_LOGGING', the detail table is named 'LILAM_LOGGING_LOG'. This dependency cannot and must not be broken.
 
-The other area of the detail table contains the metrics. As explained above, metrics within a process are distinguished by their names. The values are calculated by LILAM with each new entry.
-> Metric entries are generated by the lilam.mark_step API call.
-
-The name of the detail table is always based on the name of the master table. It consists of the name of the master table plus an attached '_DETAIL' suffix.
-Meaning: If the master table is named 'LILAM_LOGGING', the detail table is named 'LILAM_LOGGING_DETAIL'. This dependency cannot and must not be broken.
+### Monitor Table
+Stores detailed metrics for events and traces, including duration, moving averages, and action counts, all linked via the Master Table's Process ID. 
+This table uses the `Context Name` to differentiate recurring actions and records the execution type (Event or Trace) to provide a granular performance history.
 
 ### Application-Specific Tables
 In the interest of flexibility, it is possible to use dedicated LILAM logging tables for different scenarios, applications, or processes. This also requires no configuration table or similar overhead. The names of the master and detail tables are optionally set during the API call to lilam.new_session or lilam.server_new_session.
@@ -144,7 +152,8 @@ The LILAM API consists of approximately 35 procedures and functions, some of whi
 
 ### Metrics
 #### Setting Values
-* **MARK_STEP:** Documents a completed work step for an action and triggers the sum and time calculations for those actions.
+* **MARK_EVENT:** Documents a completed work step for an action and triggers the sum and time calculations for those actions.
+* **TRACE_START:** Initializes a duration measurement for a specific work step (trace) by capturing the start timestamp in the session memory.
 
 #### Querying Values
 * **GET_METRIC_AVG_DURATION:** Returns the average processing duration for actions with the same name within a process.
