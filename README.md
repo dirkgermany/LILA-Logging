@@ -193,7 +193,7 @@ SELECT * FROM lilam_log_detail WHERE process_id = <id> AND monitoring = 1
 ```
 
 >| PROCESS_ID | MON_TYPE   | ACTION     | CONTEXT          | START_TIME     | STOP_TIME       |STEPS_DONE     | USED_MILLIS | AVG_MILLIS | ACTION_COUNT
->| ---------- | ---------- | ---------- | ---------------- | -------------- | ---------------- -------------- | ------------ ------------ --------------
+>| ---------- | ---------- | ---------- | ---------------- | -------------- | --------------- | ------------- | ----------- | ---------- | --------------
 >| 1          | 0          | MY_ACTION  | MY_CONTEXT       | 13.01.26 10:.. | NULL            | NULL          | 402         |            | 0
 >| 1          | 0          | MY_ACTION  | MY_CONTEXT       | 2              | NULL            | 1500          | 510         | 501        | 505
 >| 1          | 1          | TRANS_ACT  | ROUTE_1          | 5              | 1000            | 1             | 490         | 500        | 499
