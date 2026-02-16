@@ -158,10 +158,9 @@ create or replace PACKAGE BODY LILAM AS
             condition_operator  VARCHAR2(30),  -- GREATER_THAN_AVG_PERCENT, etc.
             condition_value     NUMBER,
             alert_handler       VARCHAR2(50),  -- LOG_AND_MAIL, etc.
-            alert_severity      VARCHAR2(20)
+            alert_severity      VARCHAR2(20),
+            throttle_seconds    NUMBER         -- Warten bis zum nächsten Alarm
         );
-        
-
         TYPE t_rule_list IS TABLE OF t_rule_rec;
         TYPE t_rule_map IS TABLE OF t_rule_list INDEX BY VARCHAR2(250);
         
@@ -171,6 +170,9 @@ create or replace PACKAGE BODY LILAM AS
         -- Zusätzliche Variable für die aktuell geladene Version
         g_current_rule_set_version NUMBER := 0;
         g_current_rule_set_name    VARCHAR2(30);
+        
+        TYPE t_alert_history IS TABLE OF TIMESTAMP INDEX BY VARCHAR2(250);
+        g_alert_history t_alert_history;
    
         ---------------------------------------------------------------
         -- Automatisierte Lastverteilung
@@ -182,8 +184,7 @@ create or replace PACKAGE BODY LILAM AS
     
         ---------------------------------------------------------------
         -- General Variables
-        ---------------------------------------------------------------
-    
+        ---------------------------------------------------------------    
         -- ALERT Registration
         g_isAlertRegistered                 BOOLEAN                 := false;
             
@@ -321,9 +322,39 @@ create or replace PACKAGE BODY LILAM AS
             END IF;
         END;
         
-        ---------------------------------------------------------------------------
-        -- Identifizieren von Regeln gegen eintreffendes Prozess-Update/Event/Trace
-        ---------------------------------------------------------------------------        
+        ------------------------------------------------------------
+        -- Alarmierung aber unter Berücksichtigung, dass Alarme nicht
+        -- in kurzer Zeit zu häufig ausgelöst werden dürfen
+        ------------------------------------------------------------
+        PROCEDURE fire_alert(p_rule t_rule_rec, p_rec t_monitor_buffer_rec) IS
+            v_history_key CONSTANT VARCHAR2(250) := p_rule.rule_id || '|' || p_rec.action_name || '|' || p_rec.context_name;
+            v_last_fire    TIMESTAMP;
+            v_throttle_sec NUMBER := nvl(p_rule.throttle_seconds, 0); -- Aus dem JSON
+        BEGIN
+            -- 1. Prüfen, ob wir dieses spezifische Problem schon mal gemeldet haben
+            IF g_alert_history.EXISTS(v_history_key) THEN
+                v_last_fire := g_alert_history(v_history_key);
+                
+                -- Wenn die Sperrzeit noch nicht abgelaufen ist -> Abbruch
+                IF (v_last_fire + numtodsinterval(v_throttle_sec, 'SECOND')) > SYSTIMESTAMP THEN
+                    RETURN; 
+                END IF;
+            END IF;
+        
+            -- 2. Wenn wir hier ankommen: Alarm auslösen!
+            -- (Hier dein existierender Code für Log/Mail)
+            
+ --           write_alert_to_log(p_rule, p_rec);
+        
+            -- 3. Zeitstempel aktualisieren
+            g_alert_history(v_history_key) := SYSTIMESTAMP;
+        END;
+        
+        ------------------------------------------------------------
+        -- Identifizieren von Regeln gegen eintreffendes Event/Trace
+        
+        -- !!! Das auch implementieren für die Prozess-Updates
+        ------------------------------------------------------------      
         PROCEDURE evaluateRules(p_monitorRec t_monitor_buffer_rec, p_trigger VARCHAR2) IS
             
             -- Interne Hilfsprozedur, um Redundanz zu vermeiden
@@ -351,6 +382,17 @@ create or replace PACKAGE BODY LILAM AS
                                 END IF;
         
                             -- Hier kannst du später weitere Operatoren (MAX_STEPS etc.) ergänzen
+                            WHEN 'ON_EVENT' THEN
+                                -- Feuert immer, wenn dieses Event registriert wird
+                null;
+--                                fire_alert(p_list(i), p_rec);
+                        
+                            WHEN 'MAX_COUNT' THEN
+                                -- Feuert, wenn die Anzahl der Aufrufe überschritten wird
+                                IF p_monitorRec.actions_count > p_list(i).condition_value THEN
+                null;
+            --                    fire_alert(p_list(i), p_rec);
+                                END IF;
                         END CASE;
                     END IF;
                 END LOOP;
@@ -2509,9 +2551,13 @@ create or replace PACKAGE BODY LILAM AS
             if not g_sessionList is null then
                 g_sessionList.delete;
             end if;
+            g_remote_sessions.DELETE;
             g_process_cache.DELETE;
             g_monitor_shadows.DELETE;
-            g_local_throttle_cache.DELETE;                       
+            g_local_throttle_cache.DELETE;    
+            g_alert_history.DELETE;
+            g_rules_by_context.DELETE;
+            g_rules_by_action.DELETE;
         end;
     
         --------------------------------------------------------------------------
@@ -2520,8 +2566,8 @@ create or replace PACKAGE BODY LILAM AS
         IS
             v_idx           PLS_INTEGER;
             v_search_prefix CONSTANT VARCHAR2(50) := LPAD(p_processId, 20, '0') || '|';
-            v_key           VARCHAR2(100);
-            v_next_key      VARCHAR2(100);
+            v_key           VARCHAR2(250);
+            v_next_key      VARCHAR2(250);
             v_msg           VARCHAR2(500);
         BEGIN
     
@@ -2610,10 +2656,10 @@ create or replace PACKAGE BODY LILAM AS
                 v_key := g_monitor_shadows.NEXT(v_key);
             END LOOP;
             
-            -- G) Die Liste der aktiven Server zurücksetzen
+            -- H) Die Liste der aktiven Server zurücksetzen
             g_client_pipes.DELETE(p_processId);
             
-            -- H) Speicher von gesendeten Nachrichten und vergangener Zeit für diesen Prozess
+            -- I) Speicher von gesendeten Nachrichten und vergangener Zeit für diesen Prozess
             g_local_throttle_cache.DELETE(p_processId);
         
         EXCEPTION
@@ -3468,19 +3514,22 @@ create or replace PACKAGE BODY LILAM AS
             -- Zuerst die alten Regeln löschen (Reset)
             g_rules_by_context.DELETE;
             g_rules_by_action.DELETE;
+            g_alert_history.DELETE;
+
         
             FOR r IN (
                 SELECT *
                 FROM JSON_TABLE(p_ruleSet, '$.rules[*]'
                     COLUMNS (
-                        rule_id    VARCHAR2(20) PATH '$.id',
-                        trigger_t  VARCHAR2(20) PATH '$.trigger_type',
-                        action     VARCHAR2(50) PATH '$.action',
-                        context  VARCHAR2(50) PATH '$.context',
-                        operator VARCHAR2(30) PATH '$.condition.operator',
-                        value    NUMBER       PATH '$.condition.value',
-                        handler  VARCHAR2(50) PATH '$.alert.handler',
-                        severity VARCHAR2(20) PATH '$.alert.severity'
+                        rule_id      VARCHAR2(20) PATH '$.id',
+                        trigger_t    VARCHAR2(20) PATH '$.trigger_type',
+                        action       VARCHAR2(50) PATH '$.action',
+                        context      VARCHAR2(50) PATH '$.context',
+                        operator     VARCHAR2(30) PATH '$.condition.operator',
+                        value        NUMBER       PATH '$.condition.value',
+                        handler      VARCHAR2(50) PATH '$.alert.handler',
+                        severity     VARCHAR2(20) PATH '$.alert.severity',
+                        throttle_sec NUMBER       PATH '$.alert.throttle_seconds'
                     )
                 )
             ) LOOP
@@ -3497,6 +3546,7 @@ create or replace PACKAGE BODY LILAM AS
                     l_new_rule.condition_value    := r.value;
                     l_new_rule.alert_handler      := r.handler;
                     l_new_rule.alert_severity     := r.severity;
+                    l_new_rule.throttle_seconds   := r.throttle_sec;
         
                     -- Entscheidung: Kontext-Regel oder allgemeine Action-Regel?
                     IF r.context IS NOT NULL THEN
@@ -3836,7 +3886,6 @@ create or replace PACKAGE BODY LILAM AS
             l_dummyRes := DBMS_PIPE.REMOVE_PIPE(g_serverPipeName || C_INTERLEAVE_PIPE_SUFFIX);
             clearServerData;
             clearAllSessionData(g_serverProcessId);
-            g_remote_sessions.DELETE;
             raise;
         end;
     
