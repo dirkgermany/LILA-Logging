@@ -149,6 +149,7 @@ These rules evaluate the global state of a process stored in the Master Table.
 | Metric        | Operator Name (JSON)  | Technical Condition                             | Use Case                                      |
 | :------------ | :-------------------- | :---------------------------------------------- | :-------------------------------------------- |
 | **Runtime**   | `RUNTIME_EXCEEDED`    | `(SYSTIMESTAMP - PROCESS_START) > value`        | Detect hanging or "zombie" processes.         |
+| **Runtime**   | `MAX_RUNTIME_EXCEEDED` | `(PROCESS_END - PROCESS_START) > value`        | Process took too much time                    |
 | **Progress**  | `STEPS_LEFT_HIGH`     | `(STEPS_TODO - STEPS_DONE) > value`             | Check for unfinished work at process end.     |
 | **Efficiency**| `SUCCESS_RATE_LOW`    | `(STEPS_DONE / STEPS_TODO) * 100 < value`       | Monitor batch processing quality.             |
 | **Status**    | `STATUS_EQUALS`       | `STATUS = value`                                | React to specific error status codes.         |
