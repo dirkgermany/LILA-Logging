@@ -118,13 +118,13 @@ LILAM_VERSION constant varchar2(20) := 'v1.3.0';
     -- Server control
     -----------------
     FUNCTION CREATE_SERVER(p_password varchar2) RETURN VARCHAR2;
-    procedure START_SERVER(p_pipeName varchar2, p_groupName varchar2, p_password varchar2);
-    procedure SERVER_SHUTDOWN(p_processId number, p_pipeName varchar2, p_password varchar2);
+    PROCEDURE START_SERVER(p_pipeName varchar2, p_groupName varchar2, p_password varchar2);
+    PROCEDURE SERVER_SHUTDOWN(p_processId number, p_pipeName varchar2, p_password varchar2);
     FUNCTION GET_SERVER_PIPE(p_processId NUMBER) RETURN VARCHAR2;
     PROCEDURE SERVER_UPDATE_RULES(p_processId NUMBER, p_ruleSetName VARCHAR2, p_ruleSetVersion PLS_INTEGER);
 
-    procedure SERVER_SEND_ANY_MSG(p_processId number, p_message varchar2);
-    procedure SHUTDOWN_ALL_SERVERS;
+    PROCEDURE SERVER_SEND_ANY_MSG(p_processId number, p_message varchar2);
+    PROCEDURE SHUTDOWN_ALL_SERVERS;
 
     ----------
     -- Testing
