@@ -598,6 +598,19 @@ Writes a log entry with severity DEBUG. By default, LILAM operates 'silently,' m
 
 ---
 ### Metrics
+Metrics are quantifiable data points used to track the health and performance of a process. In LILAM, they document progress through two types of measurements:
+1. Events: Discrete occurrences at a specific point in time.
+2. Logical Transactions: Time-based segments (Traces) with a defined start and end.
+
+**Identification of Metrics:**
+The combination of p_actionName and p_contextName forms a unique identifier for a metric. Although p_contextName is optional, it must be provided consistently to match a specific trace.
+
+> [!Important]: 'TRACK_SEGMENT' is not the same as 'TRACK_SEGMENT' + 'Moulin Rouge'. If a trace is started with a context, it must be stopped with that same context.
+
+**Session Safety & Cleanup:**
+To ensure data integrity, LILAM monitors the state of all traces. Any trace that remains "open" (not closed via trace_stop) when the session ends will be automatically logged with a WARN status. This allows developers to easily identify incomplete business transactions or logic errors.
+
+    
 
 | Name               | Type      | Description                         | Scope
 | ------------------ | --------- | ----------------------------------- | -------
@@ -609,6 +622,7 @@ Writes a log entry with severity DEBUG. By default, LILAM operates 'silently,' m
 
 
 **Procedures (Setter)**
+
 
 #### Procedure MARK_EVENT
 Reports a completed work step, which typically represents an intermediate stage in the process lifecycle. For this reason, markers must not be confused with the actual process steps.
@@ -623,7 +637,7 @@ With every marker report, LILAM calculates:
   PROCEDURE MARK_EVENT(
     p_processId     NUMBER,
     p_actionName    VARCHAR2,
-    p_context_name  VARCHAR2,
+    p_contextName  VARCHAR2,
     p_timestamp     TIMESTAMP DEFAULT NULL
   )
  ```
@@ -637,7 +651,7 @@ LILAM measures the duration of each trace, maintains a moving average, and repor
   PROCEDURE TRACE_START
     p_processId     NUMBER,
     p_actionName    VARCHAR2,
-    p_context_name  VARCHAR2,
+    p_contextName  VARCHAR2,
     p_timestamp     TIMESTAMP DEFAULT NULL
   )
  ```
@@ -653,7 +667,7 @@ Stops a transaction trace. The `p_action_name` and `p_context_name` must match t
   PROCEDURE TRACE_START
     p_processId     NUMBER,
     p_actionName    VARCHAR2,
-    p_context_name  VARCHAR2,
+    p_contextName  VARCHAR2,
     p_timestamp     TIMESTAMP DEFAULT NULL
   )
  ```
