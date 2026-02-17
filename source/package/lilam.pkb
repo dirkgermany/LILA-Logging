@@ -10,7 +10,7 @@ create or replace PACKAGE BODY LILAM AS
         ---------------------------------------------------------------
         
         -- Dedicated to SERVER_LOOP
-        C_SEVER_SYNC_INTERVAL       CONSTANT PLS_INTEGER := 500;
+        C_SEVER_SYNC_INTERVAL           CONSTANT PLS_INTEGER := 500;
         C_SERVER_HEARTBEAT_INTERVAL     CONSTANT PLS_INTEGER := 60000;
         C_SERVER_MAX_LOOPS_IN_TIME      CONSTANT PLS_INTEGER := 10000;
         C_SERVER_TIMEOUT_WAIT_FOR_MSG   CONSTANT NUMBER      := 0.2; -- Timeout nach Sekunden Warten auf Nachricht
@@ -370,35 +370,58 @@ create or replace PACKAGE BODY LILAM AS
         -- Hier: Events und Transaktionen
         ------------------------------------------------------------
         PROCEDURE fire_alert(p_rule t_rule_rec, p_rec t_monitor_buffer_rec) IS
-            v_history_key CONSTANT VARCHAR2(250) := p_rule.rule_id || '|' || p_rec.action_name || '|' || p_rec.context_name;
-            v_last_fire    TIMESTAMP;
-            v_throttle_sec NUMBER := nvl(p_rule.throttle_seconds, 0); -- Aus dem JSON
-            v_channel_name VARCHAR2(30); -- max. length of Alert-Name
-            v_payload      VARCHAR2(1000);
-            v_sqlStmt      VARCHAR2(2000);
-            v_procTabName  VARCHAR2(50);
-            v_monTabName   VARCHAR2(50);
+            v_history_key   CONSTANT VARCHAR2(250) := p_rule.rule_id || '|' || p_rec.action_name || '|' || p_rec.context_name;
+            v_idx_session   PLS_INTEGER;
+            v_last_fire     TIMESTAMP;
+            v_throttle_sec  NUMBER := nvl(p_rule.throttle_seconds, 0); -- Aus dem JSON
+            v_channel_name  VARCHAR2(30); -- max. length of Alert-Name
+            v_payload       VARCHAR2(1000);
+            v_sqlStmt       VARCHAR2(2000);
+            v_alert_id  NUMBER;
         BEGIN
             -- 1. Prüfen, ob wir dieses spezifische Problem schon mal gemeldet haben
             IF g_alert_history.EXISTS(v_history_key) THEN
                 v_last_fire := g_alert_history(v_history_key);
-                
                 -- Wenn die Sperrzeit noch nicht abgelaufen ist -> Abbruch
                 IF (v_last_fire + numtodsinterval(v_throttle_sec, 'SECOND')) > SYSTIMESTAMP THEN
+dbms_output.put_line('... war schonmal gefeuert');                
                     RETURN; 
                 END IF;
             END IF;
+dbms_output.put_line('p_processId: ' || p_rec.process_id);
+
+v_idx_session := v_indexSession(p_rec.process_id);            
+dbms_output.put_line('v_procTabName: ' || g_sessionList(v_idx_session).tabName_master);
+dbms_output.put_line('v_monTabName:  ' || g_sessionList(v_idx_session).tabName_master || C_SUFFIX_MON_TABLE);
             
-            v_procTabName := getSessionRecord(p_rec.process_id).tabName_master;
-            v_monTabName := v_procTabName || C_SUFFIX_MON_TABLE;
+            v_sqlStmt := '
+            INSERT INTO ' || C_LILAM_ALERTS || '(
+                process_id, process_name, action_name, master_table_name, monitor_table_name, context_name, action_count, 
+                rule_id, rule_version, alert_severity, handler_type
+            ) VALUES (
+                :1, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11
+            ) RETURNING alert_id into :12';
             
-            -- 2. Kanalnamen dynamisch bestimmen
-            -- p_rule.alert_handler wäre hier z.B. 'MAIL', 'REST', 'PROCESS'
-            v_channel_name := 'LILAM_ALERT_' || p_rule.alert_handler;
+
+dbms_output.put_line(p_rec.process_id || ', ' || g_process_cache(p_rec.process_id).process_name || ', ' || p_rec.action_name || ', ' || 
+            g_sessionList(v_idx_session).tabName_master || ', ' || g_sessionList(v_idx_session).tabName_master || C_SUFFIX_MON_TABLE || ', ' ||  
+            p_rec.context_name || ', ' || p_rec.action_count || ', ' || p_rule.rule_id || ', ' || g_current_rule_set_version || ', ' || 
+            p_rule.alert_severity || ', ' || p_rule.alert_handler);
+            
+            EXECUTE IMMEDIATE v_sqlStmt
+            USING p_rec.process_id, g_process_cache(p_rec.process_id).process_name, p_rec.action_name,
+            g_sessionList(v_idx_session).tabName_master, g_sessionList(v_idx_session).tabName_master || C_SUFFIX_MON_TABLE, 
+            p_rec.context_name, p_rec.action_count, p_rule.rule_id, g_current_rule_set_version, p_rule.alert_severity, p_rule.alert_handler
+            RETURNING INTO v_alert_id;
+
+            commit;
+dbms_output.put_line('V_ALERT_ID: ' || v_alert_id);
+            
             v_payload := JSON_OBJECT(
+                'alert_id'         VALUE v_alert_id,
                 'process_id'       VALUE p_rec.process_id,
-                'tab_name_process' VALUE v_procTabName,
-                'tab_name_monitor' VALUE v_monTabName,
+                'tab_name_process' VALUE g_sessionList(v_idx_session).tabName_master,
+                'tab_name_monitor' VALUE g_sessionList(v_idx_session).tabName_master || C_SUFFIX_MON_TABLE,
                 'action_name'      VALUE p_rec.action_name,
                 'context_name'     VALUE p_rec.context_name,
                 'action_count'     VALUE p_rec.action_count,
@@ -408,21 +431,17 @@ create or replace PACKAGE BODY LILAM AS
                 'timestamp'        VALUE TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS.FF')
             );
             
-            v_sqlStmt := '
-            INSERT INTO ' || C_LILAM_ALERTS || '(
-                process_id, process_name, action_name, master_table_name, monitor_table_name, context_name, action_count, 
-                rule_id, rule_version, alert_severity, handler_type
-            ) VALUES (
-                :1, :2, :3, :4, :5, :6, :7, :8, :9, :10 :11
-            ) RETURNING alert_id INTO v_new_alert_id';
+dbms_output.put_line('v_payload: ' || v_payload);
             
-            execute immediate v_sqlStmt using p_rec.process_id, g_process_cache(p_rec.process_id).process_name, p_rec.action_name, v_procTabName, v_monTabName,
-            p_rec.context_name, p_rec.action_count, p_rule.rule_id, g_current_rule_set_version, p_rule.alert_severity, p_rule.alert_handler;
-            
-            dbms_alert.signal(v_channel_name, v_payload);
+            -- p_rule.alert_handler wäre hier z.B. 'MAIL', 'REST', 'PROCESS'
+            v_channel_name := 'LILAM_ALERT_' || p_rule.alert_handler;            dbms_alert.signal(v_channel_name, v_payload);
 
             -- 3. Zeitstempel aktualisieren
             g_alert_history(v_history_key) := SYSTIMESTAMP;
+        
+        exception
+            when others then
+                error(g_serverProcessId, g_serverPipeName || '=>Alert konnte nicht ausgelöst werden: ' || sqlErrM);
         END;
         
         ------------------------------------------------------------
@@ -438,13 +457,20 @@ create or replace PACKAGE BODY LILAM AS
             PROCEDURE apply_rule_list(p_list t_rule_list) IS
             BEGIN
                 IF p_list IS NULL OR p_list.COUNT = 0 THEN RETURN; END IF;
-        
+ dbms_output.enable();
+ dbms_output.put_line('.................. trigger: ' || p_trigger || ', p_monitorRec.action_name: ' || p_monitorRec.action_name);
+ 
                 FOR i IN 1 .. p_list.COUNT LOOP
                     fire := FALSE;
+dbms_output.put_line(' p_list.trigger_type: ' || p_list(i).trigger_type);
+dbms_output.put_line(' p_list.condition_operator: ' || p_list(i).condition_operator);
+dbms_output.put_line(' p_list.condition_value: ' || p_list(i).condition_value);
                     -- Nur Regeln für das aktuelle Ereignis prüfen (z.B. TRACE_STOP)
                     IF p_list(i).trigger_type = p_trigger THEN
                     
+dbms_output.put_line(' TREFFER ');
                         IF p_list(i).condition_operator IN ('ON_START', 'ON_STOP', 'ON_EVENT') THEN
+dbms_output.put_line(' FIRE ');
                             fire := TRUE;
                             CONTINUE; -- Nächste Regel prüfen
                         END IF;
@@ -457,6 +483,8 @@ create or replace PACKAGE BODY LILAM AS
         
                             WHEN 'MAX_DURATION_MS' THEN
                                 -- Absoluter Schwellwert
+dbms_output.put_line(' FIRE ');
+dbms_output.put_line(' p_monitorRec.used_time: ' || p_monitorRec.used_time);
                                 IF p_monitorRec.used_time > p_list(i).condition_value THEN
                                     fire := TRUE;
                                 END IF;
@@ -944,6 +972,8 @@ create or replace PACKAGE BODY LILAM AS
                     last_activity  TIMESTAMP,
                     current_load   NUMBER,
                     is_active      NUMBER(1),
+                    status         VARCHAR2(20),
+                    processing     NUMBER,
                     rule_set_name  VARCHAR2(30),
                     set_in_use     NUMBER DEFAULT 0
                 )';
@@ -968,6 +998,7 @@ create or replace PACKAGE BODY LILAM AS
                 CREATE TABLE ' || C_LILAM_ALERTS || ' (
                     alert_id           NUMBER GENERATED BY DEFAULT AS IDENTITY,
                     process_id         NUMBER(19,0) NOT NULL,
+                    process_name       VARCHAR2(50),
                     master_table_name  VARCHAR2(50), 
                     monitor_table_name VARCHAR2(50), 
                     action_name        VARCHAR2(100) NOT NULL,
@@ -1707,6 +1738,9 @@ create or replace PACKAGE BODY LILAM AS
                 g_monitor_groups(v_key)(l_new_idx).monitor_type    := C_MON_TYPE_EVENT;
             end if ;
             
+dbms_output.enable();
+dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId);
+
             g_monitor_groups(v_key)(l_new_idx).process_id   := p_processId;
             g_monitor_groups(v_key)(l_new_idx).action_name  := p_actionName;
             g_monitor_groups(v_key)(l_new_idx).context_name := p_contextName;
@@ -1744,7 +1778,8 @@ create or replace PACKAGE BODY LILAM AS
                 return;
             end if ;
             
-            -- Dummy nur für die Regeln            
+            -- Dummy nur für die Regeln
+            v_dummyMonRec.process_id := p_processId;
             v_dummyMonRec.start_time := nvl(p_timestamp, systimestamp);
             v_dummyMonRec.stop_time := null;
             v_dummyMonRec.monitor_type := C_MON_TYPE_TRACE;
@@ -3809,7 +3844,7 @@ create or replace PACKAGE BODY LILAM AS
             
         exception
             when NO_DATA_FOUND then
-                error(g_serverProcessId, 'Could not find server rule: ' || p_ruleSetName || '; version: ' || p_ruleSetVersion);
+                error(g_serverProcessId, g_serverPipeName || '=>Could not find server rule: ' || p_ruleSetName || '; version: ' || p_ruleSetVersion);
             when others then
                 raise;
         end;
@@ -3824,7 +3859,9 @@ create or replace PACKAGE BODY LILAM AS
         begin
             l_sqlStmt := 'SELECT rule_set_name, set_in_use FROM ' || C_LILAM_SERVER_REGISTRY || ' WHERE pipe_name = ''' || g_serverPipeName || '''';
             execute immediate l_sqlStmt into l_ruleSetName,  l_ruleSetVersion;
-            readServerRules(l_ruleSetName, l_ruleSetVersion);
+            if l_ruleSetName is not null then
+                readServerRules(l_ruleSetName, l_ruleSetVersion);
+            end if;
             
         exception
             when NO_DATA_FOUND then
@@ -3851,24 +3888,61 @@ create or replace PACKAGE BODY LILAM AS
     
         --------------------------------------------------------------------------
 
-        procedure updateServerRegistry(p_ready BOOLEAN)
+        procedure updateServerRegistry(p_ready BOOLEAN, p_eventCounter PLS_INTEGER)
         as
             pragma autonomous_transaction; 
             l_sqlStmt varchar2(500);
             l_booleanAsInt NUMBER(1);
+            l_status    varchar2(20);
         begin
             case p_ready
                 when true then l_booleanAsInt := 1;
                 when false then l_booleanAsInt := 0;
             end case;
             
+            case p_eventCounter
+                when > 0 then
+                    if p_ready then
+                        l_status := 'PROCESSING';
+                        DBMS_APPLICATION_INFO.SET_ACTION('PROCESSING');
+                        DBMS_APPLICATION_INFO.SET_CLIENT_INFO('Bulk Load:' || p_eventCounter);
+                    else
+                        l_status := 'SHUTDOWN';
+                        DBMS_APPLICATION_INFO.SET_ACTION('SHUTDOWN');
+                        DBMS_APPLICATION_INFO.SET_CLIENT_INFO('Time:' || systimestamp);
+                    end if;
+                    
+                when 0 then
+                    if p_ready then
+                        l_status := 'PENDING';
+                        DBMS_APPLICATION_INFO.SET_ACTION('PENDING');
+                        DBMS_APPLICATION_INFO.SET_CLIENT_INFO('Time:' || systimestamp);
+                    else
+                        l_status := 'STOPPED';
+                        DBMS_APPLICATION_INFO.SET_MODULE(NULL, NULL);
+                    end if;
+                    
+                when -1 then
+                    if p_ready then
+                        l_status := 'UNKNOWN';
+                        DBMS_APPLICATION_INFO.SET_ACTION('UNKNOWN');
+                        DBMS_APPLICATION_INFO.SET_CLIENT_INFO('Time:' || systimestamp);
+                    else
+                        l_status := 'ERROR';
+                        DBMS_APPLICATION_INFO.SET_ACTION('ERROR');
+                        DBMS_APPLICATION_INFO.SET_CLIENT_INFO('Exception; Server stopped!');
+                    end if;
+            end case;
+           
             l_sqlStmt := '
             UPDATE ' || C_LILAM_SERVER_REGISTRY || '
             SET last_activity = SYSTIMESTAMP, 
                 is_active = :1,
-                current_load = (SELECT pipe_size FROM v$db_pipes WHERE name = :2)
-            WHERE pipe_name = :3';
-            execute immediate l_sqlStmt using l_booleanAsInt, g_serverPipeName, g_serverPipeName;
+                current_load = (SELECT pipe_size FROM v$db_pipes WHERE name = :2),
+                status = :3,
+                processing = :4
+            WHERE pipe_name = :5';
+            execute immediate l_sqlStmt using l_booleanAsInt, g_serverPipeName, l_status, p_ready, g_serverPipeName;
             COMMIT; -- Muss autonom sein!
             
         exception
@@ -3900,7 +3974,7 @@ create or replace PACKAGE BODY LILAM AS
                         WHEN OTHERS THEN
                             -- WICHTIG: Fehler loggen, aber die Schleife NICHT verlassen!
                             raise;
-                            ERROR(g_serverProcessId, 'Internal START_SERVER; Critical Error while processing command: ' || SQLERRM);
+                            ERROR(g_serverProcessId, g_serverPipeName || '=>Internal START_SERVER; Critical Error while processing command: ' || SQLERRM);
                     END; 
             else
                 return null;
@@ -3945,6 +4019,11 @@ create or replace PACKAGE BODY LILAM AS
             registerServerPipe;
             preparePipe(g_serverPipeName);
             loadServerRules;
+            updateServerRegistry(TRUE, 0);
+            DBMS_APPLICATION_INFO.SET_MODULE(
+                module_name => 'LILAM_SERVER ' || g_serverPipeName, 
+                action_name => 'STARTUP'
+            );
 
             LOOP
                 -- Warten auf die nächste Nachricht (Timeout in Sekunden)
@@ -4016,7 +4095,7 @@ create or replace PACKAGE BODY LILAM AS
                         WHEN OTHERS THEN
                             -- WICHTIG: Fehler loggen, aber die Schleife NICHT verlassen!
                             raise;
-                            ERROR(g_serverProcessId, 'Internal START_SERVER; Critical Error while processing command: ' || SQLERRM);
+                            ERROR(g_serverProcessId, g_serverPipeName || '=>Internal START_SERVER; Critical Error while processing command: ' || SQLERRM);
                     END; 
                 end if;
                 
@@ -4024,7 +4103,7 @@ create or replace PACKAGE BODY LILAM AS
                     if get_ms_diff(l_lastSync, sysTimestamp) >= C_SEVER_SYNC_INTERVAL  THEN
                         -- Housekeeping
                         SYNC_ALL_DIRTY;
-                        updateServerRegistry(TRUE);
+                        updateServerRegistry(TRUE, l_loopCounter);
                         l_lastSync := sysTimestamp;
                         l_loopCounter := 0;
                     end if;
@@ -4040,7 +4119,7 @@ create or replace PACKAGE BODY LILAM AS
                 l_loopCounter := l_loopCounter + 1;
             END LOOP;
             -- Ab jetzt ist der Server nicht mehr erreichbar
-            updateServerRegistry(FALSE);
+            updateServerRegistry(FALSE, l_loopCounter);
             
             -- +++ NEU: DRAIN-PHASE +++
             -- Wir leeren die Pipe, falls während des Shutdowns noch Nachrichten reinkamen.
@@ -4088,14 +4167,14 @@ create or replace PACKAGE BODY LILAM AS
             -- abschließende Analyse der Buffer-Zustände
             DUMP_BUFFER_STATS;
     
-            -- Dieser Teil wird nie erreicht, solange die DB-Session aktiv ist
             close_session(g_serverProcessId);
+            updateServerRegistry(FALSE, l_loopCounter);
             
         EXCEPTION
         WHEN l_stop_server_exception THEN
             -- Hier landen wir nur, wenn der Server gezielt beendet werden soll
             DBMS_OUTPUT.PUT_LINE('Err: ' || sqlerrm);
-            ERROR(g_serverProcessId, 'Internal START_SERVER; Critical Error while processing command: ' || SQLERRM);
+            ERROR(g_serverProcessId, g_serverPipeName || '=>Internal START_SERVER; Critical Error while processing command: ' || SQLERRM);
             
             CLOSE_SESSION(g_serverProcessId);
         
@@ -4106,6 +4185,7 @@ create or replace PACKAGE BODY LILAM AS
             l_dummyRes := DBMS_PIPE.REMOVE_PIPE(g_serverPipeName || C_INTERLEAVE_PIPE_SUFFIX);
             clearServerData;
             clearAllSessionData(g_serverProcessId);
+            updateServerRegistry(FALSE, -1);
             raise;
         end;
     
