@@ -158,9 +158,11 @@ LILAM categorizes data by its intended use to ensure maximum performance for sta
 ```
 #### Track Business Transactions
 ```sql
-  -- Start monitoring a specific part of the business logic
-  lilam.trace_start(l_processId, 'TRACK_SEGMENT', 'Moulin Rouge');
-  lilam.trace_stop(l_processId, 'TRACK_SEGMENT', 'Moulin Rouge');
+-- Start monitoring a specific part of the business logic.
+-- The context (e.g., 'Moulin Rouge') is optional but highly recommended 
+-- when the same transaction type is used across different business cases
+  lilam.trace_start(l_processId, 'TRACK_SEGMENT', 'Moulin Rouge');              -- leave station, next is Moulin Rouge
+  lilam.trace_stop(l_processId, 'TRACK_SEGMENT', 'Moulin Rouge');               -- arrival Moulin Rouge
 ```
 #### Log Information (History)
 ```sql
