@@ -151,6 +151,7 @@ To illustrate how LILAM works, imagine monitoring a subway system:
 
 **Trace/Transaction (TRACK_SECTION):** A time-based segment representing the travel between two points (e.g. SECTION_ID_402). By using trace_start and trace_stop, we automatically measure the travel time (latency).
 
+#### Identifier for the ongoing Process 
 ```sql
   l_processId NUMBER;
 ```
@@ -195,24 +196,6 @@ To illustrate how LILAM works, imagine monitoring a subway system:
   -- LILAM would raise an `ALERT`
 ```
 
-#### Monitor Actions (Metrics)
-```sql
-  -- implicits count and average duration per marker
-  lilam.mark_event(l_processId, 'MY_ACTION');                                   -- observe different actions per process
-```
-#### Track Business Transactions
-```sql
--- Start monitoring a specific part of the business logic.
--- The context (e.g., 'Moulin Rouge') is optional but highly recommended 
--- when the same transaction type is used across different business cases
-  lilam.trace_start(l_processId, 'TRACK_SEGMENT', 'Moulin Rouge');              -- leave station, next is Moulin Rouge
-  lilam.trace_stop(l_processId, 'TRACK_SEGMENT', 'Moulin Rouge');               -- arrival Moulin Rouge
-```
-#### Log Information (History) and end Session
-```sql
-  lilam.info(l_processId, 'Start');
-  lilam.close_session(l_processId);                                            -- end process/session
-```
 ---
 ## Data
 ### Live-Dashboard
