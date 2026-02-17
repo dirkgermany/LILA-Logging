@@ -143,13 +143,45 @@ LILAM categorizes data by its intended use to ensure maximum performance for sta
 * Centralized Configuration: Log levels and target tables are managed via the master record.
 
 ### How to 
+To illustrate how LILAM works, imagine monitoring a subway system:
 
-#### Track a process
+**Process (TRACK_LINE_4):** The overall mission or service run of a specific line.
+
+**Event (CLOSE_DOOR):** A discrete point in time. We mark this event at a specific station (STATION_ID_400). If a mandatory event is missing, LILAM can trigger an alert.
+
+**Trace/Transaction:** A time-based segment representing the travel between two points (e.g., TRACK_SECTION = SECTION_ID_402). By using trace_start and trace_stop, we automatically measure the travel time (latency).
+
 ```sql
-  l_processId := lilam.new_session('my application', lilam.logLevelDebug, 30); -- start new process/session
-  lilam.proc_step_done(l_processId);                                           -- protocol finished main step
-  lilam.set_process_status(l_processId, my_int_status, 'my_text_status');      -- set status of process
-  lilam.close_session(l_processId);                                            -- end process/session
+  l_processId NUMBER;
+
+  -- Start the mission (as a new Process/Session)
+  -- Optional group-based isolation: LILAM servers can be assigned to specific groups to ensure strict workload isolation
+  l_processId := lilam.server_new_session(p_processName => 'TRACK_LINE_4', p_groupName => 'UNDERGROUND_MONITORING', p_logLevel := lilam.logLevelMonitor);
+
+  -- set number of steps this mission needs to be finished correctly
+  -- in our sample there are only two steps: leaving station and arriving station
+  lilam.set_steps_todo(p_processId => l_processId, p_stepsToDo => 2);
+
+  -- leave station
+  lilam.step_done(p_processId => l_processId); -- increments step-counter
+  -- doors must be closed (Event)
+  lilam.mark_event(p_processId => l_processId, p_actionName => 'CLOSE_DOOR', p_contextName => 'STATION_ID_400);
+
+  -- log travel start
+  lilam.info(p_processId => l_processId, 'Line 4 leaving base');
+
+  -- travel the segment (trace Transaction by starting and stopping)
+  lilam.trace_start(p_processId => l_processId, p_actionName => 'TRACK_SECTION', p_contextName => 'SECTION_ID_402');
+  dbms_session.sleep(30); -- the train needed 30 seconds
+  lilam.trace_stop(p_processId => l_processId, p_actionName => 'TRACK_SECTION', p_contextName => 'SECTION_ID_402');
+
+  -- the mission of line is very! short - only one section; so the mission ends here
+  --   !  this didn't happen: lilam.step_done(p_processId => l_processId); -- increments step-counter
+  lilam.info(p_processId => l_processId, 'Line 4 is back');
+  lilam.close_session(p_processId => l_processId);
+
+  -- the step-counter is one, the rule-set would await 2 steps here
+  -- LILAM would raise an `ALERT`
 ```
 #### Monitor Actions (Metrics)
 ```sql
@@ -164,9 +196,10 @@ LILAM categorizes data by its intended use to ensure maximum performance for sta
   lilam.trace_start(l_processId, 'TRACK_SEGMENT', 'Moulin Rouge');              -- leave station, next is Moulin Rouge
   lilam.trace_stop(l_processId, 'TRACK_SEGMENT', 'Moulin Rouge');               -- arrival Moulin Rouge
 ```
-#### Log Information (History)
+#### Log Information (History) and end Session
 ```sql
   lilam.info(l_processId, 'Start');
+  lilam.close_session(l_processId);                                            -- end process/session
 ```
 ---
 ## Data
