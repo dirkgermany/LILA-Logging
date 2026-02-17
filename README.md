@@ -194,7 +194,7 @@ To illustrate how LILAM works, imagine monitoring a subway system:
   lilam.info(p_processId => l_processId, 'Line 4 is back');
   lilam.close_session(p_processId => l_processId);
 
-  -- the step-counter is one, the rule-set would await 2 steps here
+  -- the step-counter is one, the rule-set awaits 2 steps here
   -- LILAM would raise an `ALERT`
 ```
 
