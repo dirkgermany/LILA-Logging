@@ -24,7 +24,7 @@ LILAM is developed by a developer who hates over-engineered tools. Focus: 5 minu
 - [Fast integration](#fast-integration)
 - [Advantages](#advantages)
 - [Process Tracking & Monitoring](#process-tracking--monitoring)
-  - [How to](#how-to)
+  - [How To - The Subway Sample](#how-to---the-subway-sample)
 - [Data](#data)
 - [Performance Benchark](#performance-benchmark)
 - [Roadmap](#roadmap)
@@ -69,6 +69,7 @@ LILAM introduces a high-performance Server-Client architecture using **Oracle Pi
 * **Auto-Synchronization:** Servers dynamically claim communication pipes, ensuring a zero-config setup
 * **Congestion Control (Throttling):** Optional protection layer that pauses hyperactive clients to ensure server stability during high-load peaks
 
+---
 #### How it works
 LILAM offers two execution models that can be used interchangeably:
 1. **In-Session Mode (Direct):** Initiated by `lilam.new_session`. Log calls are executed immediately within your current database session. This is ideal for straightforward debugging and ensuring logs are persisted synchronously.
@@ -142,7 +143,8 @@ LILAM categorizes data by its intended use to ensure maximum performance for sta
 * Immediate Transparency: Identify bottlenecks instantly through recorded action metrics.
 * Centralized Configuration: Log levels and target tables are managed via the master record.
 
-### How to 
+---
+### How To - The Subway Sample
 To illustrate how LILAM works, imagine monitoring a subway system:
 
 **Process (TRACK_LINE_4):** The overall mission or service run of a specific line.
