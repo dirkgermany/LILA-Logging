@@ -13,7 +13,8 @@
   <img src="images/lilam-logging.svg" alt="Lila Logger Logo" width="300">
 </p>
 
-LILAM is a lightweight logging and monitoring framework designed for Oracle PL/SQL applications. It provides a fast, concurrent way to track processes. Its simple API allows for seamless integration into existing applications with minimal overhead.
+LILAM is a high-performance logging, monitoring and event-driven orchestration framework for Oracle PL/SQL. It provides deep real-time insights into process metrics and utilizes a dynamic JSON-based rule engine to trigger autonomous responses and coordinate complex workflows.
+Its simple API allows for seamless integration into existing applications with minimal overhead.
 
 LILAM utilizes **autonomous transactions** to ensure that all **process states, log entries, and performance metrics** are persisted immediately. This decoupled persistence guarantees a complete audit trail and reliable monitoring data, even if the main business process performs a rollback.
 
