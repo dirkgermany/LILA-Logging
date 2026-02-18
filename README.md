@@ -64,10 +64,10 @@ LILAM is developed by a developer who hates over-engineered tools. Focus: 5 minu
 ## Advantages
 The following points complement the **Key Features** and provide a deeper insight into the architectural decisions and technical innovations of LILAM.
 
-### In-Session Mode & Decoupled Mode
+### Smart Load Balancing & Execution
 LILAM introduces a high-performance Client-Server architecture using **Oracle Pipes**. This allows for asynchronous log processing and cross-session monitoring
 * **Hybrid Execution:** Combine direct API calls within your session with decoupled processing via dedicated LILAM servers. Choose the optimal execution path for each log level or event type in real-time
-* **Smart Load Balancing:** Clients automatically discover available servers via Round-Robin
+* **Load-Aware Discovery:** Clients automatically identify and connect to the least-loaded server within their group
 * **Auto-Synchronization:** Servers dynamically claim communication pipes, ensuring a zero-config setup
 * **Congestion Control (Throttling):** Optional protection layer that pauses hyperactive clients to ensure server stability during high-load peaks
 
@@ -76,7 +76,7 @@ LILAM introduces a high-performance Client-Server architecture using **Oracle Pi
 LILAM offers two execution models that can be used interchangeably:
 1. **In-Session Mode (Direct):** Initiated by `lilam.new_session`. LILAM acts as embedded library, Log and Metric calls are executed immediately within your current database session. This is ideal for straightforward debugging and ensuring data is persisted synchronously.
 2. **Decoupled Mode (Server-based):**
-   LILAM serves as a proxy for the application and is executed as a dedicated worker process at the same time. 
+   In this mode, LILAM decouples the request from the execution. It acts as a proxy within the application session, offloading the heavy lifting to dedicated background worker processes. 
    * **Server Side:** Launch one or more LILAM-Servers using `lilam.start_server('SERVER_NAME');`. These background processes register under a custom name and monitor for incoming commands. You can scale by running multiple servers for the same name or use different names for logical separation.
    * **Client Side:** Register via `lilam.server_new_session('SERVER_NAME');`. LILAM automatically identifies and connects to the specified available server.
    * **Execution:** Log calls are serialized into a pipe and processed by the background server, minimizing the impact on your transaction time.
