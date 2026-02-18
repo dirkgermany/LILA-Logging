@@ -36,12 +36,13 @@ LILAM is developed by a developer who hates over-engineered tools. Focus: 5 minu
 1. **Lightweight:** One Package, a handful of Tables, one Sequence. That's it!
 2. **Concurrent Logging:** Supports multiple, simultaneous log entries from the same or different sessions without blocking
 3. **Monitoring:** You have the option to observe your applications via SQL or via the API
-4. **Hybrid Execution:** Run LILAM **in-session** or offload processing to a dedicated LILAM-Server (**decoupled**).
-5. **Data Integrity:** Uses autonomous transactions to guarantee log persistence regardless of the main transaction's outcome
-6. **Smart Context Capture:** Automatically records ERR_STACK,  ERR_BACKTRACE, and ERR_CALLSTACK based on log level—deep insights with zero manual effort
-7. **Optional self-cleaning:** Automatically purges expired logs per application during session start—no background jobs or schedulers required
-8. **Future Ready:** Built and tested in latest Oracle 26ai (2026) and 19c environment
-9. **Small Footprint:**  ~4k lines of logical PL/SQL code ensures simple quality and security control, fast compilation, zero bloat and minimal Shared Pool utilization (reducing memory pressure and fragmentation)
+4. **Rule-based Observability:** Apply versioned JSON rule-sets to events and business transactions; automatically triggers alerts upon violations for decoupled consumer processing
+5. **Hybrid Execution:** Run LILAM **in-session** or offload processing to a dedicated LILAM-Server (**decoupled**).
+6. **Data Integrity:** Uses autonomous transactions to guarantee log persistence regardless of the main transaction's outcome
+7. **Smart Context Capture:** Automatically records ERR_STACK,  ERR_BACKTRACE, and ERR_CALLSTACK based on log level—deep insights with zero manual effort
+8. **Optional self-cleaning:** Automatically purges expired logs per application during session start—no background jobs or schedulers required
+9. **Future Ready:** Built and tested in latest Oracle 26ai (2026) and 19c environment
+10. **Small Footprint:**  ~4k lines of logical PL/SQL code ensures simple quality and security control, fast compilation, zero bloat and minimal Shared Pool utilization (reducing memory pressure and fragmentation)
 
 ---
 
