@@ -26,6 +26,7 @@ LILAM is developed by a developer who hates over-engineered tools. Focus: 5 minu
 - [Advantages](#advantages)
 - [Process Tracking & Monitoring](#process-tracking--monitoring)
   - [How To - The Subway Sample](#how-to---the-subway-sample)
+  - [Rule-based Observability & Orchestration](#rule-based-observability--orchestration)
 - [Data](#data)
 - [Performance Benchmark](#performance-benchmark)
 - [Roadmap](#roadmap)
@@ -139,6 +140,7 @@ LILAM categorizes data by its intended use to ensure maximum performance for sta
 * **Lifecycle & Progress (Master):** One persistent record per process run. It provides real-time answers to: What is currently running? What is the progress (steps done/todo)? What is the overall status?
 * **Monitoring & Metrics:** Tracks individual work steps (actions) within a process. This layer captures performance data, including execution duration, iteration counts, and average processing times.
 * **Logging (History):** Standard operational trace. Persists log entries with severity levels, timestamps, and technical metadata (error stacks, user context) for debugging purposes.
+* **Rule-based Observability:** Apply versioned JSON rule-sets to events and business transactions; automatically triggers alerts upon violations for decoupled consumer processing.
 
 ### Key Benefits:
 * No Aggregation Required: Status checks don’t need expensive GROUP BY operations on millions of rows.
@@ -199,6 +201,13 @@ To illustrate how LILAM works, imagine monitoring a subway system:
   -- the step-counter still is `1`. If there was an implemented rule-set which awaits 2 steps
   -- at the end of mission, LILAM would raise an `ALERT`
 ```
+
+### Rule-based Observability & Orchestration
+LILAM doesn't just log data; it evaluates it. Using versioned JSON Rule-Sets, LILAM monitors process changes and business transactions in real-time.
+
+    Versioned Logic: Different worker instances can run different versions of the same rule-set simultaneously—perfect for side-by-side testing or phased rollouts.
+    Instant Alerts: Violations trigger immediate alerts, which are processed by independent consumers.
+    System Decoupling: By separating alert generation from processing, LILAM stays lean and serves as a high-performance orchestrator for downstream application logic.
 
 ---
 ## Data
