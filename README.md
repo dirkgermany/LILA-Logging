@@ -267,13 +267,13 @@ LILAM is designed for high-concurrency environments. The following results were 
 - [ ] **Zombie Session Handling:** Detect inactive clients, release allocated memory, and update process statuses automatically
 - [ ] **Singleton Server Enforcement:** Prevent multiple servers from registering under the same name to ensure message integrity and avoid process contention
 - [ ] **Resilient Load Balancing:**
-      - Reconnect by Clients if Server sends 'DRAIN_AND_RECONNECT' or 'RECONNECT'
-- [ ] **Background Server Processing:** Start LILAM servers as jobs to avoid blocking sessions
+    * Clients perform a reconnect if another server with lower workload is available 
+    * Clients perform a reconnect if Server sends 'DRAIN_AND_RECONNECT' or 'RECONNECT'
 - [ ] **Advanced Metric Visualization:**
     * Provide a pre-built Oracle APEX Dashboard to monitor real-time throughput and system health
     * Integration of Time-Series Charts to visualize metric trends and threshold violations over time
     * Support for Grafana via SQL-Plugin, enabling LILAM to be part of a centralized enterprise monitoring stack
-- [ ] **Dynamic Configuration]:** Change server configuration during runtime
+- [ ] **Dynamic Performance Configuration]:** Change server parameters during runtime
 - [ ] **Event-Driven Orchestration:**
     * Trigger automated **Actions** based on defined metric thresholds or event types
     * Enable seamless **Process Chaining**, where the completion or state of one action triggers subsequent logic
