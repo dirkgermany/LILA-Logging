@@ -197,7 +197,7 @@ To illustrate how LILAM works, imagine monitoring a subway system:
   lilam.close_session(p_processId => l_processId);
 
   -- the step-counter still is `1`. If there was an implemented rule-set which awaits 2 steps
-  -- LILAM would raise an `ALERT`
+  -- at the end of mission, LILAM would raise an `ALERT`
 ```
 
 ---
