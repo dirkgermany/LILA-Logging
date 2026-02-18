@@ -791,11 +791,12 @@ Note that an active server connection (`NEW_SESSION`) is required. Upon executio
 Depending on the selected log level, additional information is written to the *detail table*.
         
 To do this, the selected log level must be >= the level implied in the logging call.
-* logLevelSilent -> No details are written to the *detail table*
-* logLevelError  -> Calls to the ERROR() procedure are taken into account
-* logLevelWarn   -> Calls to the WARN() and ERROR() procedures are taken into account
-* logLevelInfo   -> Calls to the INFO(), WARN(), and ERROR() procedures are taken into account
-* logLevelDebug  -> Calls to the DEBUG(), INFO(), WARN(), and ERROR() procedures are taken into account
+* logLevelSilent  -> No details are written to the *detail table*
+* logLevelError   -> Calls to the ERROR() procedure are taken into account
+* logLevelWarn    -> Calls to the WARN() and ERROR() procedures are taken into account
+* logLevelMonitor -> Must be set for using the monitoring features;
+* logLevelInfo    -> Calls to the INFO(), WARN(), and ERROR() procedures are taken into account
+* logLevelDebug   -> Calls to the DEBUG(), INFO(), WARN(), and ERROR() procedures are taken into account
 
 If you want to suppress any logging, set logLevelSilent as active log level.
 
@@ -803,11 +804,12 @@ If you want to suppress any logging, set logLevelSilent as active log level.
 To simplify usage and improve code readability, constants for the log levels are declared in the specification (lilam.pks).
 
 ```sql
-logLevelSilent  constant number := 0;
-logLevelError   constant number := 1;
-logLevelWarn    constant number := 2;
-logLevelInfo    constant number := 4;
-logLevelDebug   constant number := 8;
+logLevelSilent  constant PLS_INTEGER := 0;
+logLevelError   constant PLS_INTEGER := 1;
+logLevelWarn    constant PLS_INTEGER := 2;
+logLevelMonitor constant PLS_INTEGER := 3;
+logLevelInfo    constant PLS_INTEGER := 4;
+logLevelDebug   constant PLS_INTEGER := 8;
 ```
 
 ### Record Type t_session_init
