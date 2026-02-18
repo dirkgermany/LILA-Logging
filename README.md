@@ -170,7 +170,8 @@ To illustrate how LILAM works, imagine monitoring a subway system:
 ```
 #### Open Session (begin Process) and set Session values
 ```sql
-  -- Start the mission (as a new Process/Session)
+  -- Start the mission (as a new Process/Session.
+  -- This and all other calls return in microseconds, as the LILAM proxy instantly offloads the workload to the asynchronous worker.
   -- Optional group-based isolation: LILAM servers can be assigned to specific groups to ensure strict workload isolation
   l_processId := lilam.server_new_session(p_processName => 'TRACK_LINE_4', p_groupName => 'UNDERGROUND_MONITORING', p_logLevel => lilam.logLevelMonitor);
 
