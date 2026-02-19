@@ -120,6 +120,14 @@ create or replace PACKAGE BODY LILAM AS
         TYPE t_monitor_shadow_map IS TABLE OF t_monitor_buffer_rec INDEX BY VARCHAR2(200);
         g_monitor_shadows t_monitor_shadow_map;
         g_monitor_averages t_monitor_shadow_map;
+        
+        -- remember to latest action
+        TYPE t_action_history_rec IS RECORD (
+            full_key VARCHAR2(100),
+            stop_time   TIMESTAMP
+        );
+        TYPE t_last_action_map IS TABLE OF t_action_history_rec INDEX BY PLS_INTEGER; 
+        g_last_action_per_process t_last_action_map;
                     
         ---------------------------------------------------------------
         -- Logging
@@ -370,7 +378,9 @@ create or replace PACKAGE BODY LILAM AS
         -- Hier: Events und Transaktionen
         ------------------------------------------------------------
         PROCEDURE fire_alert(p_rule t_rule_rec, p_rec t_monitor_buffer_rec) IS
-            v_history_key   CONSTANT VARCHAR2(250) := p_rule.rule_id || '|' || p_rec.action_name || '|' || p_rec.context_name;
+            pragma autonomous_transaction;
+            v_history_key varchar2(200) := p_rec.process_id || '|' || p_rule.rule_id || '|' || p_rec.action_name;
+--            v_history_key   varchar2(200); --CONSTANT VARCHAR2(250);
             v_idx_session   PLS_INTEGER;
             v_last_fire     TIMESTAMP;
             v_throttle_sec  NUMBER := nvl(p_rule.throttle_seconds, 0); -- Aus dem JSON
@@ -384,38 +394,29 @@ create or replace PACKAGE BODY LILAM AS
                 v_last_fire := g_alert_history(v_history_key);
                 -- Wenn die Sperrzeit noch nicht abgelaufen ist -> Abbruch
                 IF (v_last_fire + numtodsinterval(v_throttle_sec, 'SECOND')) > SYSTIMESTAMP THEN
-dbms_output.put_line('... war schonmal gefeuert');                
                     RETURN; 
                 END IF;
             END IF;
-dbms_output.put_line('p_processId: ' || p_rec.process_id);
-
-v_idx_session := v_indexSession(p_rec.process_id);            
-dbms_output.put_line('v_procTabName: ' || g_sessionList(v_idx_session).tabName_master);
-dbms_output.put_line('v_monTabName:  ' || g_sessionList(v_idx_session).tabName_master || C_SUFFIX_MON_TABLE);
             
             v_sqlStmt := '
             INSERT INTO ' || C_LILAM_ALERTS || '(
                 process_id, process_name, action_name, master_table_name, monitor_table_name, context_name, action_count, 
-                rule_id, rule_version, alert_severity, handler_type
+                rule_set_name, rule_id, rule_set_version, alert_severity, handler_type
             ) VALUES (
-                :1, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11
-            ) RETURNING alert_id into :12';
-            
+                :1, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11, :12
+            ) RETURNING alert_id into :13';
 
-dbms_output.put_line(p_rec.process_id || ', ' || g_process_cache(p_rec.process_id).process_name || ', ' || p_rec.action_name || ', ' || 
-            g_sessionList(v_idx_session).tabName_master || ', ' || g_sessionList(v_idx_session).tabName_master || C_SUFFIX_MON_TABLE || ', ' ||  
-            p_rec.context_name || ', ' || p_rec.action_count || ', ' || p_rule.rule_id || ', ' || g_current_rule_set_version || ', ' || 
-            p_rule.alert_severity || ', ' || p_rule.alert_handler);
+            v_idx_session := v_indexSession(p_rec.process_id);
             
             EXECUTE IMMEDIATE v_sqlStmt
             USING p_rec.process_id, g_process_cache(p_rec.process_id).process_name, p_rec.action_name,
             g_sessionList(v_idx_session).tabName_master, g_sessionList(v_idx_session).tabName_master || C_SUFFIX_MON_TABLE, 
-            p_rec.context_name, p_rec.action_count, p_rule.rule_id, g_current_rule_set_version, p_rule.alert_severity, p_rule.alert_handler
+            p_rec.context_name, p_rec.action_count, g_current_rule_set_name, p_rule.rule_id, g_current_rule_set_version, 
+            p_rule.alert_severity, p_rule.alert_handler
             RETURNING INTO v_alert_id;
 
-            commit;
-dbms_output.put_line('V_ALERT_ID: ' || v_alert_id);
+dbms_output.enable();
+dbms_output.put_line('..................... ALERTEN .......................');
             
             v_payload := JSON_OBJECT(
                 'alert_id'         VALUE v_alert_id,
@@ -425,22 +426,28 @@ dbms_output.put_line('V_ALERT_ID: ' || v_alert_id);
                 'action_name'      VALUE p_rec.action_name,
                 'context_name'     VALUE p_rec.context_name,
                 'action_count'     VALUE p_rec.action_count,
+                'rule_set_name'    VALUE g_current_rule_set_name,
                 'rule_id'          VALUE p_rule.rule_id,
-                'rule_version'     VALUE g_current_rule_set_version,
+                'rule_set_version' VALUE g_current_rule_set_version,
                 'alert_severity'   VALUE p_rule.alert_severity,
                 'timestamp'        VALUE TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS.FF')
             );
-            
-dbms_output.put_line('v_payload: ' || v_payload);
-            
+dbms_output.put_line('nach json objekt');
+
             -- p_rule.alert_handler wäre hier z.B. 'MAIL', 'REST', 'PROCESS'
-            v_channel_name := 'LILAM_ALERT_' || p_rule.alert_handler;            dbms_alert.signal(v_channel_name, v_payload);
+            v_channel_name := 'LILAM_ALERT_' || p_rule.alert_handler;
+dbms_output.put_line('v_channel_name: ' || v_channel_name);
+            dbms_alert.signal(v_channel_name, v_payload);
+dbms_output.put_line('alertet');
+
+            COMMIT; -- !!!
 
             -- 3. Zeitstempel aktualisieren
             g_alert_history(v_history_key) := SYSTIMESTAMP;
         
         exception
             when others then
+                rollback;
                 error(g_serverProcessId, g_serverPipeName || '=>Alert konnte nicht ausgelöst werden: ' || sqlErrM);
         END;
         
@@ -457,46 +464,33 @@ dbms_output.put_line('v_payload: ' || v_payload);
             PROCEDURE apply_rule_list(p_list t_rule_list) IS
             BEGIN
                 IF p_list IS NULL OR p_list.COUNT = 0 THEN RETURN; END IF;
- dbms_output.enable();
- dbms_output.put_line('.................. trigger: ' || p_trigger || ', p_monitorRec.action_name: ' || p_monitorRec.action_name);
- 
                 FOR i IN 1 .. p_list.COUNT LOOP
                     fire := FALSE;
-dbms_output.put_line(' p_list.trigger_type: ' || p_list(i).trigger_type);
-dbms_output.put_line(' p_list.condition_operator: ' || p_list(i).condition_operator);
-dbms_output.put_line(' p_list.condition_value: ' || p_list(i).condition_value);
                     -- Nur Regeln für das aktuelle Ereignis prüfen (z.B. TRACE_STOP)
                     IF p_list(i).trigger_type = p_trigger THEN
-                    
-dbms_output.put_line(' TREFFER ');
-                        IF p_list(i).condition_operator IN ('ON_START', 'ON_STOP', 'ON_EVENT') THEN
-dbms_output.put_line(' FIRE ');
+                        CASE
+                        WHEN p_list(i).condition_operator IN ('ON_START', 'ON_STOP', 'ON_EVENT') THEN
                             fire := TRUE;
-                            CONTINUE; -- Nächste Regel prüfen
-                        END IF;
                         
-                        CASE p_list(i).condition_operator
-                            WHEN 'AVG_DEVIATION_PCT' THEN
+                        WHEN p_list(i).condition_operator = 'AVG_DEVIATION_PCT' THEN
                                 if not validateDurationInAverage(p_monitorRec, p_list(i).condition_value) then
                                     fire := TRUE;
                                 END IF;
         
-                            WHEN 'MAX_DURATION_MS' THEN
+                            WHEN p_list(i).condition_operator = 'MAX_DURATION_MS' THEN
                                 -- Absoluter Schwellwert
-dbms_output.put_line(' FIRE ');
-dbms_output.put_line(' p_monitorRec.used_time: ' || p_monitorRec.used_time);
                                 IF p_monitorRec.used_time > p_list(i).condition_value THEN
                                     fire := TRUE;
                                 END IF;
                         
-                            WHEN 'MAX_OCCURRENCE' THEN
+                            WHEN p_list(i).condition_operator = 'MAX_OCCURRENCE' THEN
                                 -- Feuert, wenn die Anzahl der Aufrufe überschritten wird
                                 IF p_monitorRec.action_count > p_list(i).condition_value THEN
                                     fire := TRUE;
                                 END IF;
                                 
                                                                 
-                            WHEN 'MAX_GAP_SECONDS' THEN
+                            WHEN p_list(i).condition_operator = 'MAX_GAP_SECONDS' THEN
                                 v_key := buildMonitorKey(p_monitorRec.process_id, p_monitorRec.action_name, p_monitorRec.context_name);
                                 IF g_monitor_shadows.EXISTS(v_key) THEN
                                     DECLARE
@@ -512,6 +506,62 @@ dbms_output.put_line(' p_monitorRec.used_time: ' || p_monitorRec.used_time);
                                         END IF;
                                     END;
                                 END IF;
+                                
+                            WHEN p_list(i).condition_operator = 'PRECEDED_BY' THEN
+                                DECLARE
+                                    -- Wir brauchen einen String (VARCHAR2), keine Zahl (PLS_INTEGER)
+                                    l_actual_history_key VARCHAR2(500); 
+                                BEGIN
+                                    -- 1. Sicherstellen, dass überhaupt etwas im Gedächtnis ist
+                                    IF g_last_action_per_process.EXISTS(p_monitorRec.process_id) THEN
+                                        l_actual_history_key := g_last_action_per_process(p_monitorRec.process_id).full_key;
+                                        
+                                        -- 2. Vergleich: Entspricht die Historie der Erwartung aus dem JSON?
+                                        -- Wir nutzen LIKE, falls im JSON nur die Action ohne |Context steht
+                                        IF l_actual_history_key = p_list(i).condition_value 
+                                           OR l_actual_history_key LIKE p_list(i).condition_value || '|%' 
+                                        THEN
+                                            -- Alles okay, Bedingung erfüllt -> kein Alarm
+                                            NULL;
+                                        ELSE
+                                            -- Historie passt nicht zur Erwartung -> FEUER!
+                                            fire := TRUE;
+                                        END IF;
+                                    ELSE
+                                        -- Gar kein Vorgänger bekannt -> Auch das ist ein Regelverstoß
+                                        fire := TRUE;
+                                    END IF;
+                                END;
+
+                            WHEN p_list(i).condition_operator = 'PRECEDED_BY_WITHIN_SECS' THEN
+                                IF g_last_action_per_process.EXISTS(p_monitorRec.process_id) THEN
+                                    DECLARE
+                                        l_history     t_action_history_rec := g_last_action_per_process(p_monitorRec.process_id);
+                                        l_pos         PLS_INTEGER; 
+                                        l_expected    VARCHAR2(100);
+                                        l_max_seconds NUMBER;
+                                        l_gap_ms      NUMBER;
+                                    BEGIN
+                                        -- Validierung: Wenn keine Pipe da ist, ist die Regel ungültig konfiguriert
+                                        l_pos := instr(p_list(i).condition_value, '|', -1);
+                                        IF l_pos > 0 THEN
+                                            l_expected    := substr(p_list(i).condition_value, 1, l_pos - 1);
+                                            l_max_seconds := to_number(substr(p_list(i).condition_value, l_pos + 1));                            
+                                            -- 1. Identität prüfen
+                                            IF l_history.full_key != l_expected THEN
+                                                fire := TRUE; 
+                                            ELSE
+                                                -- 2. Zeitfenster prüfen
+                                                l_gap_ms := get_ms_diff(l_history.stop_time, p_monitorRec.start_time);
+                                                IF (l_gap_ms / 1000) > l_max_seconds THEN
+                                                    fire := TRUE; 
+                                                END IF;
+                                            END IF;
+                                        END IF;
+                                    END;
+                                ELSE
+                                    fire := TRUE; -- Gar kein Vorgänger vorhanden!
+                                END IF;
                             
                         END CASE;
                     END IF;
@@ -524,7 +574,7 @@ dbms_output.put_line(' p_monitorRec.used_time: ' || p_monitorRec.used_time);
         
         BEGIN
             -- 1. Spezifische Kontext-Regeln prüfen (Key: Action|Context)
-            IF g_rules_by_context.EXISTS(p_monitorRec.action_name || '|' || p_monitorRec.context_name) THEN
+            IF g_rules_by_context.EXISTS(p_monitorRec.action_name || '|' || p_monitorRec.context_name) THEN          
                 apply_rule_list(g_rules_by_context(p_monitorRec.action_name || '|' || p_monitorRec.context_name));
             END IF;
         
@@ -532,8 +582,15 @@ dbms_output.put_line(' p_monitorRec.used_time: ' || p_monitorRec.used_time);
             IF g_rules_by_action.EXISTS(p_monitorRec.action_name) THEN
                 apply_rule_list(g_rules_by_action(p_monitorRec.action_name));
             END IF;
+            
+            --  die aktuell geprüfte Aktion wird nun zum Vorgänger der nächsten
+            g_last_action_per_process(p_monitorRec.process_id).full_key := p_monitorRec.action_name || p_monitorRec.context_name;
+            g_last_action_per_process(p_monitorRec.process_id).stop_time   := nvl(p_monitorRec.stop_time, p_monitorRec.start_time);
+            
+        exception
+            when others then
+            raise;
         END;
-
         
         ---------------------------------------------------------------
         -- Identifizieren von Regeln gegen eintreffendes Prozess-Update
@@ -547,61 +604,110 @@ dbms_output.put_line(' p_monitorRec.used_time: ' || p_monitorRec.used_time);
             -- Interne Hilfsprozedur, um Redundanz zu vermeiden
             PROCEDURE apply_rule_list(p_list t_rule_list) IS
             BEGIN
-                IF p_list IS NULL OR p_list.COUNT = 0 THEN RETURN; END IF;
-        
+dbms_output.enable();
+                IF p_list IS NULL OR p_list.COUNT = 0 THEN dbms_output.put_line('-------- leere Liste '); RETURN; END IF;       
                 FOR i IN 1 .. p_list.COUNT LOOP
+dbms_output.put_line('Check Regel ID: ' || p_list(i).rule_id || ' - Erwarteter condition_operator: ' || p_list(i).condition_operator || 
+                     ' - Erwartet: ' || p_list(i).trigger_type || 
+                     ' - Erhalten: ' || p_trigger);
                     fire := FALSE;
-                    
                     -- Nur Regeln für das aktuelle Ereignis prüfen (z.B. TRACE_STOP)
-                    IF p_list(i).trigger_type = p_trigger THEN
-                    
-                        IF p_list(i).condition_operator IN ('ON_START', 'ON_STOP', 'ON_UPDATE', 'ON_EVENT') THEN
-                            fire := TRUE;
-                            CONTINUE; -- Nächste Regel prüfen
-                        END IF;
-                        
-                        CASE p_list(i).condition_operator
-                            WHEN 'RUNTIME_EXCEEDED' THEN
+                    IF p_list(i).trigger_type = p_trigger THEN                    
+                        CASE
+                            WHEN p_list(i).condition_operator IN ('ON_START', 'ON_STOP', 'ON_UPDATE', 'ON_EVENT', 'PROCESS_START') THEN
+--                                p_monRec.process_id := p_processRec.id;
+--                                p_monRec.action_name := p_processRec.process_name;
+--                                p_monRec.context_name := null;
+--                                p_monRec.action_count := p_processRec.proc_steps_done;
+                                dbms_output.put_line('   [DIRECT-FIRE] Operator: ' || p_list(i).condition_operator);
+                                fire := TRUE;
+
+                            WHEN p_list(i).condition_operator = 'RUNTIME_EXCEEDED' THEN
                                 if p_processRec.process_end is null and 
                                     get_ms_diff(nvl(p_processRec.last_update, systimestamp), systimestamp) >  to_number(p_list(i).condition_value)
                                 then
                                     fire := TRUE;
                                 end if;
         
-                            WHEN 'MAX_RUNTIME_EXCEEDED' THEN
+                            WHEN p_list(i).condition_operator = 'MAX_RUNTIME_EXCEEDED' THEN
                                 if p_processRec.process_end is not null and
                                     get_ms_diff(p_processRec.process_start, p_processRec.process_end) >  to_number(p_list(i).condition_value)
                                 then
                                     fire := TRUE;
                                 end if;
         
-                            WHEN 'STEPS_LEFT_HIGH' THEN
+                            WHEN p_list(i).condition_operator = 'STEPS_LEFT_HIGH' THEN
                                 if p_processRec.proc_steps_todo - p_processRec.proc_steps_done > (p_list(i).condition_value) then
                                     fire := TRUE;
                                 end if;                                
         
-                            WHEN 'SUCCESS_RATE_LOW' THEN
+                            WHEN p_list(i).condition_operator = 'SUCCESS_RATE_LOW' THEN
                                 if nvl(p_processRec.proc_steps_todo, 0) > 0 and (
                                     p_processRec.proc_steps_done / p_processRec.proc_steps_todo * 100 < to_number(p_list(i).condition_value)
                                 ) then
                                     fire := TRUE;
                                 end if; 
                                 
-                            WHEN 'MAX_OCCURRENCE' THEN
+                            WHEN p_list(i).condition_operator = 'MAX_OCCURRENCE' THEN
                                 if p_processRec.proc_steps_todo - p_processRec.proc_steps_done > (p_list(i).condition_value) then
                                     fire := TRUE;
                                 end if;                                
                             
-                            WHEN 'STATUS_EQUALS' THEN
+                            WHEN p_list(i).condition_operator = 'STATUS_EQUALS' THEN
                                 if nvl(p_processRec.status, -1) = to_number(p_list(i).condition_value) then
                                     fire := TRUE;
                                 end if; 
                                 
-                            WHEN 'INFO_CONTAINS' THEN
+                            WHEN p_list(i).condition_operator = 'INFO_CONTAINS' THEN
                                 if p_processRec.info is not null and
                                     UPPER(p_processRec.info) LIKE '%' || UPPER(p_list(i).condition_value) || '%' then
                                     fire := TRUE;
-                                end if;                                     
+                                end if;
+                                
+                            WHEN p_list(i).condition_operator = 'PRECEDED_BY' THEN
+                                declare
+                                    l_history_key  PLS_INTEGER := g_last_action_per_process(p_processRec.id).full_key;
+                                begin                                
+                                    -- Wenn im JSON nur "ACTION" steht, schneiden wir den Context beim Vergleich ab
+                                    IF l_history_key = p_list(i).condition_value 
+                                       OR l_history_key LIKE p_list(i).condition_value || '|%' THEN
+                                        -- Treffer!
+                                        null;
+                                    ELSE
+                                        fire := TRUE;
+                                    END IF;
+                                end;
+
+                            WHEN p_list(i).condition_operator = 'PRECEDED_BY_WITHIN_SECS' THEN
+                                IF g_last_action_per_process.EXISTS(p_processRec.id) THEN
+                                    DECLARE
+                                        l_history     t_action_history_rec := g_last_action_per_process(p_processRec.id);
+                                        l_pos         PLS_INTEGER; 
+                                        l_expected    VARCHAR2(100);
+                                        l_max_seconds NUMBER;
+                                        l_gap_ms      NUMBER;
+                                    BEGIN
+                                        -- Validierung: Wenn keine Pipe da ist, ist die Regel ungültig konfiguriert
+                                        l_pos := instr(p_list(i).condition_value, '|', -1);
+                                        IF l_pos > 0 THEN
+                                            l_expected    := substr(p_list(i).condition_value, 1, l_pos - 1);
+                                            l_max_seconds := to_number(substr(p_list(i).condition_value, l_pos + 1)); -- Rule in seconds                            
+                                            -- 1. Identität prüfen
+                                            IF l_history.full_key != l_expected THEN
+                                                fire := TRUE; 
+                                            ELSE
+                                                -- 2. Zeitfenster prüfen
+                                                l_gap_ms := get_ms_diff(l_history.stop_time, p_processRec.process_start);
+                                                IF (l_gap_ms / 1000) > l_max_seconds THEN
+                                                    fire := TRUE; 
+                                                END IF;
+                                            END IF;
+                                        END IF;
+                                    END;
+                                ELSE
+                                    fire := TRUE; -- Gar kein Vorgänger vorhanden!
+                                END IF;
+
                         END CASE;
                     END IF;
                     
@@ -618,7 +724,10 @@ dbms_output.put_line(' p_monitorRec.used_time: ' || p_monitorRec.used_time);
         
         BEGIN
             -- Prozesse kennen keinen Kontext (Key: Action)
+    dbms_output.enable();
+    dbms_output.put_line('p_processRec.process_name : ' || p_processRec.process_name);
             IF g_rules_by_action.EXISTS(p_processRec.process_name) THEN
+            dbms_output.put_line('... rule exists: ' || g_rules_by_action(p_processRec.process_name).count);
                 apply_rule_list(g_rules_by_action(p_processRec.process_name));
             END IF;
         END;
@@ -742,12 +851,16 @@ dbms_output.put_line(' p_monitorRec.used_time: ' || p_monitorRec.used_time);
         IS
             l_now TIMESTAMP := SYSTIMESTAMP;
             l_diff_millis PLS_INTEGER;
+            l_new_throttle t_throttle_stat;
         BEGIN
             if NOT g_is_high_perf THEN 
                 -- In nicht hochperformanten Umgebungen den Client etwas einbremsen
                 if NOT g_local_throttle_cache.EXISTS(p_processId) THEN
-                    g_local_throttle_cache(p_processId).msg_count := 0;
-                    g_local_throttle_cache(p_processId).last_check := l_now;
+                  l_new_throttle.msg_count := 0;
+                  l_new_throttle.last_check := l_now;
+                  
+                  g_local_throttle_cache(p_processId) := l_new_throttle;
+
                 end if ;
             
                 -- Counter hochzählen
@@ -1004,8 +1117,9 @@ dbms_output.put_line(' p_monitorRec.used_time: ' || p_monitorRec.used_time);
                     action_name        VARCHAR2(100) NOT NULL,
                     context_name       VARCHAR2(100),
                     action_count       NUMBER NOT NULL,
+                    rule_set_name      VARCHAR2(50),
                     rule_id            VARCHAR2(20) NOT NULL,
-                    rule_version       NUMBER NOT NULL,
+                    rule_set_version   NUMBER NOT NULL,
                     alert_severity     VARCHAR2(20),
                     handler_type       VARCHAR2(20),              
                     status             VARCHAR2(20) DEFAULT ''PENDING'',
@@ -1737,9 +1851,6 @@ dbms_output.put_line(' p_monitorRec.used_time: ' || p_monitorRec.used_time);
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := 0;
                 g_monitor_groups(v_key)(l_new_idx).monitor_type    := C_MON_TYPE_EVENT;
             end if ;
-            
-dbms_output.enable();
-dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId);
 
             g_monitor_groups(v_key)(l_new_idx).process_id   := p_processId;
             g_monitor_groups(v_key)(l_new_idx).action_name  := p_actionName;
@@ -1748,14 +1859,13 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
             g_monitor_groups(v_key)(l_new_idx).start_time   := nvl(p_timestamp, systimestamp);
             
             -- vor dem Überschreiben des shadow-Eintrags die Regeln prüfen
-            evaluateRules(g_monitor_groups(v_key)(l_new_idx), 'MARK_EVENT ');
+            evaluateRules(g_monitor_groups(v_key)(l_new_idx), 'MARK_EVENT');
             g_monitor_shadows(v_key) := g_monitor_groups(v_key)(g_monitor_groups(v_key).LAST);         
             
             v_idx := v_indexSession(p_processId);
             g_sessionList(v_idx).monitor_dirty_count := nvl(g_sessionList(v_idx).monitor_dirty_count, 0) + 1;
             g_dirty_queue(p_processId) := TRUE; 
             
---            validateDurationInAverage(p_processId, g_monitor_groups(v_key)(l_new_idx));
             SYNC_ALL_DIRTY;
             
         exception
@@ -1786,9 +1896,9 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
             v_dummyMonRec.action_name := p_actionName;
             v_dummyMonRec.context_name := p_contextName;
 
-            if g_monitor_shadows.EXISTS(v_key) THEN
+--            if g_monitor_shadows.EXISTS(v_key) THEN
                 evaluateRules(v_dummyMonRec, 'TRACE_START');
-            end if;
+--            end if;
             g_monitor_shadows(v_key) := v_dummyMonRec;
             
             -- Regeln prüfen; der Shadow-Eintrag steht für die neue Transaktion            
@@ -1933,7 +2043,7 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
         --------------------------------------------------------------------------
         -- Monitoring a step
         --------------------------------------------------------------------------
-        PROCEDURE MARK_EVENT(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2, p_timestamp timestamp default NULL)
+        PROCEDURE MARK_EVENT(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2 default NULL, p_timestamp timestamp default NULL)
         as
         begin
             writeEventToMonitorBuffer (p_processId, p_actionName, p_contextName, p_timestamp);     
@@ -1944,14 +2054,14 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
         --------------------------------------------------------------------------
         -- Monitoring a transaction
         --------------------------------------------------------------------------
-        PROCEDURE TRACE_START(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2, p_timestamp timestamp default NULL)
+        PROCEDURE TRACE_START(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2 default null, p_timestamp timestamp default NULL)
         as
         begin
             startTrace (p_processId, p_actionName, p_contextName, p_timestamp);     
         end;
         --------------------------------------------------------------------------
 
-        PROCEDURE TRACE_STOP(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2, p_timestamp TIMESTAMP DEFAULT NULL)
+        PROCEDURE TRACE_STOP(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2 default null, p_timestamp TIMESTAMP DEFAULT NULL)
         as
         begin
             writeTraceToMonitorBuffer(p_processId, p_actionName, p_contextName, p_timestamp);
@@ -2138,8 +2248,8 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
         begin
             sqlStatement := '
             update PH_MASTER_TABLE
-            set process_end = current_timestamp,
-                last_update = current_timestamp';
+            set process_end = systimestamp,
+                last_update = systimestamp';
     
             if p_procStepsDone is not null then
                 sqlStatement := sqlStatement || ', proc_steps_done = :PH_PROC_STEPS_DONE';
@@ -2883,6 +2993,11 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
             
             -- I) Speicher von gesendeten Nachrichten und vergangener Zeit für diesen Prozess
             g_local_throttle_cache.DELETE(p_processId);
+            
+            -- J) Abgelegte Vorgänger-Aktionen löschen
+                IF g_last_action_per_process.EXISTS(p_processId) THEN
+                    g_last_action_per_process.DELETE(p_processId);
+                END IF;
         
         EXCEPTION
             WHEN OTHERS THEN
@@ -2950,6 +3065,8 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
             if v_indexSession.EXISTS(p_processId) then
                 g_dirty_queue(p_processId) := TRUE;
                 SYNC_ALL_DIRTY(true);
+                
+                g_process_cache(p_processId).process_end := systimestamp;
         
                 evaluateRules(g_process_cache(p_processId), C_PROCESS_STOP);
                 
@@ -2957,7 +3074,7 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
                 persist_close_session(p_processId,  g_sessionList(v_idx).tabName_master, p_procStepsToDo, p_procStepsDone, p_processInfo, p_status);
                 checkLogsBuffer(p_processId, 'vor clearAllSessionData');
                 clearAllSessionData(p_processId);
-            checkLogsBuffer(p_processId, 'nach clearAllSessionData');
+                checkLogsBuffer(p_processId, 'nach clearAllSessionData');
     
             end if ;
         end;
@@ -3427,6 +3544,8 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
             DBMS_PIPE.RESET_BUFFER; -- Koffer leeren
             DBMS_PIPE.PACK_MESSAGE('{"process_id":' || l_processId || '}');        
             l_status := DBMS_PIPE.SEND_MESSAGE(p_clientChannel, timeout => 1);
+            
+            evaluateRules(g_process_cache(l_processId), C_PROCESS_START);
         end;    
     
         -------------------------------------------------------------------------- 
@@ -3741,6 +3860,7 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
             pragma autonomous_transaction; 
             l_payload varchar2(1000);
         BEGIN
+dbms_output.enable();
             -- Zuerst die alten Regeln löschen (Reset)
             g_rules_by_context.DELETE;
             g_rules_by_action.DELETE;
@@ -3778,10 +3898,12 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
                     l_new_rule.alert_handler      := r.handler;
                     l_new_rule.alert_severity     := r.severity;
                     l_new_rule.throttle_seconds   := r.throttle_sec;
+
         
                     -- Entscheidung: Kontext-Regel oder allgemeine Action-Regel?
                     IF r.context IS NOT NULL THEN
                         l_key := r.action || '|' || r.context;
+dbms_output.put_line('l_key : ' || l_key);
                         IF NOT g_rules_by_context.EXISTS(l_key) THEN
                             g_rules_by_context(l_key) := t_rule_list();
                         END IF;
@@ -3789,6 +3911,7 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
                         g_rules_by_context(l_key)(g_rules_by_context(l_key).LAST) := l_new_rule;
                     ELSE
                         l_key := r.action;
+dbms_output.put_line('l_key : ' || l_key);
                         IF NOT g_rules_by_action.EXISTS(l_key) THEN
                             g_rules_by_action(l_key) := t_rule_list();
                         END IF;
@@ -3841,10 +3964,14 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
             l_sqlStmt varchar2(200);
             l_serverRuleSet CLOB;
         begin
+    dbms_output.enable();
+    dbms_output.put_line('-----------------------   g_serverPipeName: ' || g_serverPipeName );
             l_sqlStmt := 'SELECT rule_set FROM ' || C_LILAM_RULES || ' where set_name = :1 and version = :2';
             execute immediate l_sqlStmt into l_serverRuleSet using p_ruleSetName, p_ruleSetVersion;
             
+    dbms_output.put_line('vor load');
             load_rules_from_json(l_serverRuleSet);
+    dbms_output.put_line('nach load');
             
         exception
             when NO_DATA_FOUND then
@@ -4106,61 +4233,6 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
                     l_clientChannel := extractClientChannel(l_message);
                     l_request := extractClientRequest(l_message);
                     l_shutdownSignal := processRequest(l_request, l_message, l_clientChannel);
-/*
-                    CASE l_request
-                        WHEN 'SERVER_SHUTDOWN' then
-                            if handleServerShutdown(l_clientChannel, l_message) then 
-                                -- nur wenn gültiges Passwort geschickt wurde
-                                l_shutdownSignal := TRUE;
-                                INFO(g_serverProcessId, g_serverPipeName || '=> Shutdown by remote request');
-                            end if ;
-                            
-                        WHEN 'UPDATE_RULE' then
-                            updateServerRules(l_message);
-                            
-                        WHEN 'SERVER_PING' then
-                        null;
-                        
-                        WHEN 'NEW_SESSION' THEN
-                            INFO(g_serverProcessId, g_serverPipeName || '=> New remote session ordered');
-                            doRemote_newSession(l_clientChannel, l_message);
-                            
-                        WHEN 'CLOSE_SESSION' THEN
-                            INFO(g_serverProcessId, g_serverPipeName || '=> Remote session closed');
-                            doRemote_closeSession(l_clientChannel, l_message);
-    
-                        WHEN 'LOG_ANY' then
-                            doRemote_logAny(l_message);
-                            
-                        WHEN 'SET_ANY_STATUS' then
-                            doRemote_setAnyStatus(l_message);
-                            
-                        WHEN 'PROC_STEP_DONE' then
-                            doRemote_procStepDone(l_message);
-                            
-                        WHEN 'GET_PROCESS_DATA' then
-                            doRemote_getProcessData(l_clientChannel, l_message);
-                            
-                        WHEN 'MARK_EVENT' then
-                            doRemote_markEvent(l_message);
-                            
-                        WHEN 'START_TRACE' then
-                            doRemote_startTrace(l_message);
-                            
-                        WHEN 'STOP_TRACE' then
-                            doRemote_stopTrace(l_message);
-                            
-                        WHEN 'GET_MONITOR_LAST_ENTRY' then
-                            doRemote_getMonitorLastEntry(l_clientChannel, l_message);
-                            
-                        WHEN 'UNFREEZE_REQUEST' then
-                            doRemote_unfreezeClient(l_clientChannel, l_message);
-                            
-                        ELSE 
-                            -- Unbekanntes Tag loggen
-                            warn(g_serverProcessId, g_serverPipeName || '=> Received unknown request: ' || l_request);
-                    END CASE;
-*/    
                     EXCEPTION
                         WHEN l_stop_server_exception THEN
                             -- Diese Exception wird NICHT hier abgefangen, 
@@ -4208,22 +4280,8 @@ dbms_output.put_line('writeEventToMonitorBuffer -> p_processId: ' || p_processId
                 l_request := extractClientRequest(l_message);
                 
                 -- Im Drain verarbeiten wir nur noch Log-Daten, keine neuen Sessions/Shutdowns
---                if l_request IN ('LOG_ANY', 'MARK_EVENT', 'UNFREEZE_REQUEST') THEN
                     l_shutdownSignal := processRequest(l_request, l_message, l_clientChannel, TRUE);
-/*
-                    CASE l_request
-                        WHEN 'LOG_ANY' then
-                            doRemote_logAny(l_message);
-                            
-                        WHEN 'MARK_EVENT' then
-                            doRemote_markEvent(l_message);
-                            
-                        WHEN 'UNFREEZE_REQUEST' then
-                            doRemote_unfreezeClient(l_clientChannel, l_message);
-    
-                    END CASE;
-*/
---                end if ;
+
             END LOOP;
             
             DBMS_OUTPUT.ENABLE();
