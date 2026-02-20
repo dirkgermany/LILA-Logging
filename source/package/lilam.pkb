@@ -416,7 +416,7 @@ create or replace PACKAGE BODY LILAM AS
             RETURNING INTO v_alert_id;
 
 dbms_output.enable();
-dbms_output.put_line('..................... ALERTEN .......................');
+dbms_output.put_line('..................... ALERTEN  ALERT_ID = ' || v_alert_id);
             
             v_payload := JSON_OBJECT(
                 'alert_id'         VALUE v_alert_id,
@@ -432,7 +432,6 @@ dbms_output.put_line('..................... ALERTEN .......................');
                 'alert_severity'   VALUE p_rule.alert_severity,
                 'timestamp'        VALUE TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS.FF')
             );
-dbms_output.put_line('nach json objekt');
 
             -- p_rule.alert_handler wäre hier z.B. 'MAIL', 'REST', 'PROCESS'
             v_channel_name := 'LILAM_ALERT_' || p_rule.alert_handler;
