@@ -62,6 +62,9 @@ create or replace PACKAGE BODY LILAM_MAILER AS
 
     PROCEDURE send_mail_via_relay(p_subject VARCHAR2, p_body VARCHAR2, p_recipient VARCHAR2) IS
         l_conn  utl_smtp.connection;
+        l_offset     NUMBER := 1;
+        l_chunk_size NUMBER := 1500; -- Bleibt sicher unter dem SMTP-Limit
+        l_body_len   NUMBER := DBMS_LOB.GETLENGTH(p_body);
     BEGIN
         -- 1. Verbindung zum lokalen Postfix (ohne Wallet!)
         l_conn := utl_smtp.open_connection('localhost', 25);
@@ -71,12 +74,27 @@ create or replace PACKAGE BODY LILAM_MAILER AS
         utl_smtp.mail(l_conn, 'dirk@dirk-goldbach.de');
         utl_smtp.rcpt(l_conn, p_recipient);
         
-        -- 3. Die Mail-Daten (Header + Body)
+        -- 3. Die Mail-Daten (Header)
         utl_smtp.open_data(l_conn);
+        
+
         utl_smtp.write_data(l_conn, 'From: LILAM Engine <dirk@dirk-goldbach.de>' || utl_tcp.crlf);
         utl_smtp.write_data(l_conn, 'To: ' || p_recipient || utl_tcp.crlf);
         utl_smtp.write_data(l_conn, 'Subject: ' || p_subject || utl_tcp.crlf);
-        utl_smtp.write_data(l_conn, utl_tcp.crlf || p_body);
+        
+        -- 4. DER ENTSCHEIDENDE TEIL: MIME-Version und HTML Content-Type
+        utl_smtp.write_data(l_conn, 'MIME-Version: 1.0' || utl_tcp.crlf);
+        utl_smtp.write_data(l_conn, 'Content-Type: text/html; charset=UTF-8' || utl_tcp.crlf);
+
+        utl_smtp.write_data(l_conn, utl_tcp.crlf);
+        
+        -- 5. Der CLOB-Splitter (Damit keine Zeilen mehr zerreißen)
+        WHILE l_offset <= l_body_len LOOP
+            utl_smtp.write_data(l_conn, DBMS_LOB.SUBSTR(p_body, l_chunk_size, l_offset));
+            l_offset := l_offset + l_chunk_size;
+        END LOOP;
+--        utl_smtp.write_data(l_conn, p_body);
+
         utl_smtp.close_data(l_conn);
         
         utl_smtp.quit(l_conn);
@@ -118,27 +136,8 @@ create or replace PACKAGE BODY LILAM_MAILER AS
     FUNCTION readProcessData(p_processId NUMBER, p_action VARCHAR2, p_actionCount PLS_INTEGER, p_masterTabName VARCHAR2, p_monitorTabName VARCHAR2) return t_process_rec
     as
         l_process_rec t_process_rec;
-l_sqlStmt varchar2(1000);
     begin
-        -- 4. Dynamische Daten aus Master/Monitor Tabellen holen
         -- Da die Tabellennamen variabel sind, nutzen wir EXECUTE IMMEDIATE
-        
-l_sqlstmt := '
-            SELECT master.id, master.process_name, master.status,
-                master.info, master.process_start, master.process_end,
-                master.proc_steps_todo, master.proc_steps_done, monitor.mon_type,
-                monitor.action, monitor.context,monitor.start_time, monitor.stop_time,
-                monitor.action_count, monitor.used_millis, monitor.avg_millis
-             FROM ' || p_masterTabName || ' master
-             LEFT JOIN ' || p_monitorTabName || ' monitor
-                ON master.id = monitor.process_id
-                AND monitor.action = ''' || p_action || ''' 
-                AND monitor.action_count = ' || p_actionCount || '
-             WHERE master.id = ' || p_processId;
-             
-dbms_output.enable();
-dbms_output.put_line(l_sqlStmt);
-
         EXECUTE IMMEDIATE 
             'SELECT master.id, master.process_name, master.status,
                 master.info, master.process_start, master.process_end,
@@ -163,8 +162,65 @@ dbms_output.put_line(l_sqlStmt);
     end;
     
     -------------------------------------------------------------------------
+    
+    function prepareMailBodyHtml(p_processRec t_process_rec, p_alertRec t_alert_rec, p_json_rec  t_json_rec) return CLOB
+    as
+        v_color varchar2(20);
+        v_html clob;
+    begin
+    
+        v_color := CASE p_alertRec.alert_severity 
+                      WHEN 'CRITICAL' THEN '#e74c3c' -- Rot
+                      WHEN 'WARN'     THEN '#f39c12' -- Orange
+                      ELSE                 '#3498db' -- Blau
+                   END;
+                   
+        
+        v_html := '<html><body style="font-family: Arial, sans-serif; color: #333; line-height: 1.5;">' || utl_tcp.crlf ||
+                  -- HEADER
+                  '<div style="background-color: ' || v_color || '; color: white; padding: 15px; font-size: 20px; font-weight: bold;">' ||
+                  'LILAM Alert: ' || p_alertRec.rule_id || ' (' || p_alertRec.alert_severity || ')</div>' || utl_tcp.crlf ||
+                  
+                  -- 1. BLOCK: REGEL (JSON)
+                  '<h3 style="color: ' || v_color || ';">Regel-Details</h3>' ||
+                  '<table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">' ||
+                  '<tr><td style="width: 200px; font-weight: bold; border-bottom: 1px solid #ddd; padding: 8px;">Trigger / Action:</td>' ||
+                  '<td style="border-bottom: 1px solid #ddd; padding: 8px;">' || p_json_rec.trigger_type || ' / ' || p_json_rec.action || '</td></tr>' ||
+                  '<tr><td style="font-weight: bold; border-bottom: 1px solid #ddd; padding: 8px;">Bedingung:</td>' ||
+                  '<td style="border-bottom: 1px solid #ddd; padding: 8px;">' || p_json_rec.condition_operator || ' (' || p_json_rec.condition_value || ')</td></tr>' ||
+                  '</table>' ||
+        
+                  -- 2. BLOCK: PROZESS (MASTER)
+                  '<h3 style="color: ' || v_color || ';">Prozess-Status</h3>' ||
+                  '<table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">' ||
+                  '<tr><td style="width: 200px; font-weight: bold; border-bottom: 1px solid #ddd; padding: 8px;">Prozess Name (ID):</td>' ||
+                  '<td style="border-bottom: 1px solid #ddd; padding: 8px;">' || p_processRec.process_name || ' (' || p_processRec.process_id || ')</td></tr>' ||
+                  '<tr><td style="font-weight: bold; border-bottom: 1px solid #ddd; padding: 8px;">Fortschritt / Status:</td>' ||
+                  '<td style="border-bottom: 1px solid #ddd; padding: 8px;">' || p_processRec.steps_done || ' von ' || p_processRec.steps_todo || ' erledigt (Status: ' || p_processRec.process_status || ')</td></tr>' ||
+                  '<tr><td style="font-weight: bold; border-bottom: 1px solid #ddd; padding: 8px;">Info:</td>' ||
+                  '<td style="border-bottom: 1px solid #ddd; padding: 8px;">' || NVL(p_processRec.process_info, '-') || '</td></tr>' || utl_tcp.crlf ||
+                  '</table>';
+        
+        -- 3. BLOCK: MONITORING (Nur wenn vorhanden via LEFT JOIN)
+        IF p_processRec.action_name IS NOT NULL THEN
+            v_html := v_html || 
+                  '<h3 style="color: ' || v_color || ';">Monitoring / Performance</h3>' ||
+                  '<table style="width: 100%; border-collapse: collapse; background-color: #f9f9f9;">' ||
+                  '<tr><td style="width: 200px; font-weight: bold; border-bottom: 1px solid #ddd; padding: 8px;">Aktion / Kontext:</td>' ||
+                  '<td style="border-bottom: 1px solid #ddd; padding: 8px;">' || p_processRec.action_name || ' | ' || NVL(p_processRec.context_name, 'None') || '</td></tr>' ||
+                  '<tr><td style="font-weight: bold; border-bottom: 1px solid #ddd; padding: 8px;">Dauer (Ist / Schnitt):</td>' ||
+                  '<td style="border-bottom: 1px solid #ddd; padding: 8px;"><b>' || p_processRec.used_millis || ' ms</b> (Schnitt: ' || p_processRec.avg_millis || ' ms)</td></tr>' ||
+                  '<tr><td style="font-weight: bold; border-bottom: 1px solid #ddd; padding: 8px;">Zeitpunkt:</td>' ||
+                  '<td style="border-bottom: 1px solid #ddd; padding: 8px;">' || TO_CHAR(p_processRec.action_start, 'HH24:MI:SS.FF3') || '</td></tr>' ||
+                  '</table>';
+        END IF;
+        
+        v_html := v_html || '<p style="font-size: 10px; color: #999; margin-top: 30px;">LILAM Engine Alert ID: ' || p_alertRec.alert_id || '</p></body></html>';
+        return v_html;
 
-    FUNCTION prepareMailBody(p_process_rec t_process_rec, p_alertRec t_alert_rec, l_json_rec  t_json_rec) return CLOB
+    end;
+
+    FUNCTION prepareMailBodyPlain(p_process_rec t_process_rec, p_alertRec t_alert_rec, l_json_rec  t_json_rec) return CLOB
     as
         l_body CLOB;
         l_duration pls_integer;
@@ -258,7 +314,7 @@ dbms_output.put_line(l_sqlStmt);
                         SELECT alert_id, process_id, master_table_name, monitor_table_name, action_name, context_name,
                             action_count, rule_set_name, rule_id, rule_set_version, alert_severity
                         FROM LILAM_ALERTS
-                        WHERE handler_type = 'MAIL_LOG' and status = 'PENDING' FOR UPDATE SKIP LOCKED
+                        WHERE handler_type = 'MAIL_LOG' and status in ('PENDING') FOR UPDATE SKIP LOCKED
                     ) LOOP
                         l_alert_rec.alert_id            := rec.alert_id;
                         l_alert_rec.process_id          := rec.process_id; 
@@ -274,11 +330,13 @@ dbms_output.put_line(l_sqlStmt);
 
                         l_json_rec := readJsonRule(l_alert_rec);
                         l_process_rec := readProcessData(l_alert_rec.process_id, l_alert_rec.action_name, l_alert_rec.action_count, l_alert_rec.master_table_name, l_alert_rec.monitor_table_name);
-                        v_mail_body := prepareMailBody(l_process_rec, l_alert_rec, l_json_rec);
+                        v_mail_body := prepareMailBodyHtml(l_process_rec, l_alert_rec, l_json_rec);
                        
-                        send_mail_via_relay('ALERT: ' || l_alert_rec.rule_id, v_mail_body, 'dirk@dirk-goldbach.de');
+                        send_mail_via_relay('LILAM-ALERT: ' || l_alert_rec.rule_id, v_mail_body, 'dirk@dirk-goldbach.de');
+--                        send_mail_via_relay('LILAM-ALERT: ' || l_alert_rec.rule_id, v_mail_body, 'matthias.weinert@t-online.de');
                         
                         updateAlert(rec.alert_id);
+                        dbms_session.sleep(10); -- Vermeidung von Spam-Sperre
                     END LOOP;
                     COMMIT; -- Macht die Verarbeitung für andere sichtbar
                 END IF;
