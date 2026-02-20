@@ -414,9 +414,6 @@ create or replace PACKAGE BODY LILAM AS
             p_rec.context_name, p_rec.action_count, g_current_rule_set_name, p_rule.rule_id, g_current_rule_set_version, 
             p_rule.alert_severity, p_rule.alert_handler
             RETURNING INTO v_alert_id;
-
-dbms_output.enable();
-dbms_output.put_line('..................... ALERTEN  ALERT_ID = ' || v_alert_id);
             
             v_payload := JSON_OBJECT(
                 'alert_id'         VALUE v_alert_id,
@@ -435,10 +432,7 @@ dbms_output.put_line('..................... ALERTEN  ALERT_ID = ' || v_alert_id)
 
             -- p_rule.alert_handler wäre hier z.B. 'MAIL', 'REST', 'PROCESS'
             v_channel_name := 'LILAM_ALERT_' || p_rule.alert_handler;
-dbms_output.put_line('v_channel_name: ' || v_channel_name);
             dbms_alert.signal(v_channel_name, v_payload);
-dbms_output.put_line('alertet');
-
             COMMIT; -- !!!
 
             -- 3. Zeitstempel aktualisieren
@@ -603,22 +597,13 @@ dbms_output.put_line('alertet');
             -- Interne Hilfsprozedur, um Redundanz zu vermeiden
             PROCEDURE apply_rule_list(p_list t_rule_list) IS
             BEGIN
-dbms_output.enable();
                 IF p_list IS NULL OR p_list.COUNT = 0 THEN dbms_output.put_line('-------- leere Liste '); RETURN; END IF;       
                 FOR i IN 1 .. p_list.COUNT LOOP
-dbms_output.put_line('Check Regel ID: ' || p_list(i).rule_id || ' - Erwarteter condition_operator: ' || p_list(i).condition_operator || 
-                     ' - Erwartet: ' || p_list(i).trigger_type || 
-                     ' - Erhalten: ' || p_trigger);
                     fire := FALSE;
                     -- Nur Regeln für das aktuelle Ereignis prüfen (z.B. TRACE_STOP)
                     IF p_list(i).trigger_type = p_trigger THEN                    
                         CASE
                             WHEN p_list(i).condition_operator IN ('ON_START', 'ON_STOP', 'ON_UPDATE', 'ON_EVENT', 'PROCESS_START') THEN
---                                p_monRec.process_id := p_processRec.id;
---                                p_monRec.action_name := p_processRec.process_name;
---                                p_monRec.context_name := null;
---                                p_monRec.action_count := p_processRec.proc_steps_done;
-                                dbms_output.put_line('   [DIRECT-FIRE] Operator: ' || p_list(i).condition_operator);
                                 fire := TRUE;
 
                             WHEN p_list(i).condition_operator = 'RUNTIME_EXCEEDED' THEN
@@ -723,10 +708,7 @@ dbms_output.put_line('Check Regel ID: ' || p_list(i).rule_id || ' - Erwarteter c
         
         BEGIN
             -- Prozesse kennen keinen Kontext (Key: Action)
-    dbms_output.enable();
-    dbms_output.put_line('p_processRec.process_name : ' || p_processRec.process_name);
             IF g_rules_by_action.EXISTS(p_processRec.process_name) THEN
-            dbms_output.put_line('... rule exists: ' || g_rules_by_action(p_processRec.process_name).count);
                 apply_rule_list(g_rules_by_action(p_processRec.process_name));
             END IF;
         END;
@@ -3440,8 +3422,9 @@ dbms_output.put_line('Check Regel ID: ' || p_list(i).rule_id || ' - Erwarteter c
             
         exception
             when others then
-                dbms_output.enable();
-                dbms_output.put_line('Fehler in doRemote_getMonitorLastEntry: ' || sqlErrM);
+                null;
+--                dbms_output.enable();
+--                dbms_output.put_line('Fehler in doRemote_getMonitorLastEntry: ' || sqlErrM);
         end;    
 
         -------------------------------------------------------------------------- 
@@ -3487,8 +3470,9 @@ dbms_output.put_line('Check Regel ID: ' || p_list(i).rule_id || ' - Erwarteter c
             
         exception
             when others then
-                dbms_output.enable();
-                dbms_output.put_line('Fehler in doRemote_getProcessData: ' || sqlErrM);
+                null;
+--                dbms_output.enable();
+--                dbms_output.put_line('Fehler in doRemote_getProcessData: ' || sqlErrM);
         end;    
 
         -------------------------------------------------------------------------- 
@@ -3518,8 +3502,9 @@ dbms_output.put_line('Check Regel ID: ' || p_list(i).rule_id || ' - Erwarteter c
             
         exception
             when others then
-                dbms_output.enable();
-                dbms_output.put_line('Fehler in doRemote_unfreezeClient: ' || sqlErrM);
+                null;
+--                dbms_output.enable();
+--                dbms_output.put_line('Fehler in doRemote_unfreezeClient: ' || sqlErrM);
         end;    
         
         -------------------------------------------------------------------------- 
@@ -3859,7 +3844,6 @@ dbms_output.put_line('Check Regel ID: ' || p_list(i).rule_id || ' - Erwarteter c
             pragma autonomous_transaction; 
             l_payload varchar2(1000);
         BEGIN
-dbms_output.enable();
             -- Zuerst die alten Regeln löschen (Reset)
             g_rules_by_context.DELETE;
             g_rules_by_action.DELETE;
@@ -3902,7 +3886,6 @@ dbms_output.enable();
                     -- Entscheidung: Kontext-Regel oder allgemeine Action-Regel?
                     IF r.context IS NOT NULL THEN
                         l_key := r.action || '|' || r.context;
-dbms_output.put_line('l_key : ' || l_key);
                         IF NOT g_rules_by_context.EXISTS(l_key) THEN
                             g_rules_by_context(l_key) := t_rule_list();
                         END IF;
@@ -3910,7 +3893,6 @@ dbms_output.put_line('l_key : ' || l_key);
                         g_rules_by_context(l_key)(g_rules_by_context(l_key).LAST) := l_new_rule;
                     ELSE
                         l_key := r.action;
-dbms_output.put_line('l_key : ' || l_key);
                         IF NOT g_rules_by_action.EXISTS(l_key) THEN
                             g_rules_by_action(l_key) := t_rule_list();
                         END IF;
@@ -3963,14 +3945,9 @@ dbms_output.put_line('l_key : ' || l_key);
             l_sqlStmt varchar2(200);
             l_serverRuleSet CLOB;
         begin
-    dbms_output.enable();
-    dbms_output.put_line('-----------------------   g_serverPipeName: ' || g_serverPipeName );
             l_sqlStmt := 'SELECT rule_set FROM ' || C_LILAM_RULES || ' where set_name = :1 and version = :2';
-            execute immediate l_sqlStmt into l_serverRuleSet using p_ruleSetName, p_ruleSetVersion;
-            
-    dbms_output.put_line('vor load');
+            execute immediate l_sqlStmt into l_serverRuleSet using p_ruleSetName, p_ruleSetVersion;           
             load_rules_from_json(l_serverRuleSet);
-    dbms_output.put_line('nach load');
             
         exception
             when NO_DATA_FOUND then
