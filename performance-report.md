@@ -19,7 +19,7 @@
 *   **vCPU:** 3 Kerne (In VirtualBox zugewiesen)
 *   **CPU:** Verwendet max. 2 Threads (Engpass bei parallelen Workern)
 
-## 5. Ressourcen-Effizienz der Worker-Architektur
+## 4. Ressourcen-Effizienz der Worker-Architektur
 Die Analyse des Ressourcenverbrauchs während der Hochlastphase (bis zu 2.800 EPS Gesamtlast) zeigt die Skalierbarkeit der gewählten Architektur:
 
 *   **SGA-Nutzung (Pipe):** Die Speichernutzung innerhalb der SGA blieb trotz massiver Datenströme minimal. Dies belegt, dass die Worker-Prozesse die Pipes nahezu verzögerungsfrei leeren (Consumer-Geschwindigkeit > Producer-Geschwindigkeit), solange keine I/O-Sperren auftreten.
@@ -28,7 +28,7 @@ Die Analyse des Ressourcenverbrauchs während der Hochlastphase (bis zu 2.800 EP
 *   **I/O-Verhalten (Redo):** Der Worker-Prozess transformiert hohen logischen Durchsatz in massiven physischen I/O (ca. 4,5 GB Redo-Daten). Die Effizienz der Persistierung hängt hierbei direkt von der Batch-Größe des Commits ab (Faktor 3 Gewinn bei 1000er-Batches).
 
 
-## 6. Durchsatz & Testszenario
+## 5. Durchsatz & Testszenario
 Das Test-Szenario hatte drei Ziele:
 1. Ermittlung der Latenzen zwischen Zeitpunkt von Logs, Metriken und Prozessänderungen und dem sicheren Persistieren in die LILAM-Tabellen (commit).
 2. Performance eines simulierten Clients, der abwechseln Daten sequentiell in eine Tabelle schreibt und über die API von LILAM Events meldet.
@@ -55,7 +55,7 @@ Im zweiten Paar wurden von einem Client Messpunkte an einen Server geschickt, de
 
 *Hinweis: Der Durchsatz von Paar 2 stieg nach Umstellung auf 1.000er Commits um den **Faktor 3** an.*
 
-## 7. Darstellung der Latenz (Echtzeit-Fähigkeit)
+## 6. Darstellung der Latenz (Echtzeit-Fähigkeit)
 Gemessen durch den Zeitstempel-Vergleich zwischen Producer (`LATENZ_TEST`) und Engine-Eingang (`REMOTE_LOG_MON`).
 
 | Metrik | Wert (Clean Run 100k) | Wert (Dauerlast 4M) |
