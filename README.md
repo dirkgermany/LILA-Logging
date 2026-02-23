@@ -274,6 +274,14 @@ For a detailed analysis of throughput, latency, and resource efficiency, please 
 *   [Performance- & Belastungstest-Bericht (Deutsche Version)](./performance-report-deu.md)
 
 ---
+## License
+This project is dual-licensed:
+- For **Open Source** use: [GPLv3](LICENSE)
+- For **Commercial** use (internal production or software embedding): [LILAM Enterprise License](LICENSE_ENTERPRISE.md)
+
+*If you wish to use LILAM in a proprietary environment without the GPL "copyleft" obligations, please contact me for a commercial license.*
+
+---
 ## Roadmap
 - [ ] **Automatic Fallback:**
     * switch to the next available server or
@@ -286,28 +294,16 @@ For a detailed analysis of throughput, latency, and resource efficiency, please 
 - [ ] **Resilient Load Balancing:**
     * Clients perform a reconnect if another server with lower workload is available 
     * Clients perform a reconnect if Server sends 'DRAIN_AND_RECONNECT' or 'RECONNECT'
-- [ ] **Advanced Metric Visualization:**
-    * Provide a pre-built Oracle APEX Dashboard to monitor real-time throughput and system health
-    * Integration of Time-Series Charts to visualize metric trends and threshold violations over time
-    * Support for Grafana via SQL-Plugin, enabling LILAM to be part of a centralized enterprise monitoring stack
 - [ ] **Dynamic Performance Configuration]:** Change server parameters during runtime
-- [ ] **Event-Driven Orchestration:**
+- [X] **Event-Driven Orchestration:**
     * Trigger automated **Actions** based on defined metric thresholds or event types
     * Enable seamless **Process Chaining**, where the completion or state of one action triggers subsequent logic
-- [ ] **Smart Alerting Logic:** Refine anomaly detection to distinguish between insignificant micro-variations (e.g., millisecond jitter) and actual performance regressions using configurable noise floors
+- [X] **Smart Alerting Logic:** Refine anomaly detection to distinguish between insignificant micro-variations (e.g., millisecond jitter) and actual performance regressions using configurable noise floors
 - [ ] **Elastic Resource Management:**
     * Automatically scale LILAM-Server instances based on real-time pipe throughput
     * Ensure Graceful Shutdown of redundant instances to free up CPU and SGA without data loss
 - [ ] **List active Sessions:** Retrieves a list of all active sessions, pipes and so on
-- [ ] **JSon Signatures:** Offering API-calls with JSon Objects as input parameters
-
-
-## License
-This project is dual-licensed:
-- For **Open Source** use: [GPLv3](LICENSE)
-- For **Commercial** use (internal production or software embedding): [LILAM Enterprise License](LICENSE_ENTERPRISE.md)
-
-*If you wish to use LILAM in a proprietary environment without the GPL "copyleft" obligations, please contact me for a commercial license.*
+- [ ] **JSon Signatures:** Transport header information into server also as logged values
 
 
 ---
