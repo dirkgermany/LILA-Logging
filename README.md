@@ -28,9 +28,10 @@ LILAM is developed by a developer who hates over-engineered tools. Focus: 5 minu
   - [Rule-based Observability & Orchestration](#rule-based-observability--orchestration)
   - [How To - The Subway Sample](#how-to---the-subway-sample)
 - [Data](#data)
+- [API](#api)
 - [Performance Benchmark](#performance-benchmark)
-- [Roadmap](#roadmap)
 - [License](#license)
+- [Roadmap](#roadmap)
 
 
 ## Key features
