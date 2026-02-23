@@ -259,15 +259,15 @@ FUNCTION SERVER_NEW_SESSION(
 
 **Parameters**
 
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processName | VARCHAR2| freely selectable name for identifying the process; is written to *master table* | [`M`](#m)
-| p_groupName | VARCHAR2| used to get a dedicated server for the group | [`N`](#n)
-| p_logLevel | PLS_INTEGER | determines the level of detail in *detail table* (see above) | [`M`](#m)
-| p_stepsToDo | PLS_INTEGER | defines how many steps must be done during the process | [`O`](#o)
-| p_daysToKeep | PLS_INTEGER | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`O`](#o)
-| p_serverName | VARCHAR2 | Used for server affinity / multi-tenancy| [`O`](od)
-| p_TabNameMaster | VARCHAR2 | optional prefix of the LOG table names (see above) | [`D`](#d)
+| Parameter | Type | JSON | Description | Required
+| --------- | ---- | --- | ----------- | -------
+| p_processName | VARCHAR2| process_name | freely selectable name for identifying the process; is written to *master table* | [`M`](#m)
+| p_groupName | VARCHAR2| group_name | used to get a dedicated server for the group | [`N`](#n)
+| p_logLevel | PLS_INTEGER | log_level | determines the level of detail in *detail table* (see above) | [`M`](#m)
+| p_stepsToDo | PLS_INTEGER | steps_todo | defines how many steps must be done during the process | [`O`](#o)
+| p_daysToKeep | PLS_INTEGER | days_to_keep | max. age of entries in days; if not NULL, all entries older than p_daysToKeep and whose process name = p_processName (not case sensitive) are deleted | [`O`](#o)
+| p_serverName | VARCHAR2 | server_name | Used for server affinity / multi-tenancy| [`O`](od)
+| p_TabNameMaster | VARCHAR2 | tab_name_master | optional prefix of the LOG table names (see above) | [`D`](#d)
 
 **Returns**
 * Type: NUMBER
@@ -339,13 +339,13 @@ Ends a logging session with optional final informations. Four function signature
 
 **Parameters**
 
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-| p_stepsToDo | PLS_INTEGER | Number of work steps that would have been necessary for complete processing. This value must be managed by the calling package | [`N`](#n)
-| p_stepsDone | PLS_INTEGER | Number of work steps that were actually processed. This value must be managed by the calling package | [`N`](#n)
-| p_processInfo | VARCHAR2 | Final information about the process (e.g., a readable status) | [`N`](#n)
-| p_status | PLS_INTEGER | Final status of the process (freely selected by the calling package) | [`N`](#n)
+| Parameter | Type | JSON | Description | Required
+| --------- | ---- | --- | ----------- | -------
+| p_processId | NUMBER | process_id | ID of the process to which the session applies | [`M`](#m)
+| p_stepsToDo | PLS_INTEGER | steps_todo | Number of work steps that would have been necessary for complete processing. This value must be managed by the calling package | [`N`](#n)
+| p_stepsDone | PLS_INTEGER | steps_done | Number of work steps that were actually processed. This value must be managed by the calling package | [`N`](#n)
+| p_processInfo | VARCHAR2 | process_info | Final information about the process (e.g., a readable status) | [`N`](#n)
+| p_status | PLS_INTEGER | status | Final status of the process (freely selected by the calling package) | [`N`](#n)
 
 > [!IMPORTANT]
 > Since LILAM utilizes high-performance buffering, calling `CLOSE_SESSION` is essential to ensure that all remaining data is flushed and securely written to the database. To prevent data loss during an unexpected application crash, ensure that CLOSE_SESSION is part of your exception handling:
@@ -427,14 +427,14 @@ Sets the total number of completed steps. Note: Calling this procedure overwrite
 
 **Parameters**
 
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-| p_processStatus | PLS_INTEGER | information about the overall state of the process | [`O`](#o)
-| p_stepsToDo | PLS_INTEGER | Number of work steps that would have been necessary for complete processing. This value must be managed by the calling package | [`N`](#n)
-| p_stepsDone | PLS_INTEGER | Number of work steps that were actually processed. This value must be managed by the calling package | [`N`](#n)
-| p_processInfo | VARCHAR2 | Final information about the process (e.g., a readable status) | [`N`](#n)
-| p_status | PLS_INTEGER | Final status of the process (freely selected by the calling package) | [`N`](#n)
+| Parameter | Type | JSON | Description | Required
+| --------- | ---- | --- | ----------- | -------
+| p_processId | NUMBER | process_id | ID of the process to which the session applies | [`M`](#m)
+| p_processStatus | PLS_INTEGER | process_status | information about the overall state of the process | [`O`](#o)
+| p_stepsToDo | PLS_INTEGER | steps_todo | Number of work steps that would have been necessary for complete processing. This value must be managed by the calling package | [`N`](#n)
+| p_stepsDone | PLS_INTEGER | steps_done | Number of work steps that were actually processed. This value must be managed by the calling package | [`N`](#n)
+| p_processInfo | VARCHAR2 | process_info | Final information about the process (e.g., a readable status) | [`N`](#n)
+| p_status | PLS_INTEGER | status | Final status of the process (freely selected by the calling package) | [`N`](#n)
 
 **Functions (Getter)**
 
@@ -590,10 +590,10 @@ Writes a log entry with severity DEBUG. By default, LILAM operates 'silently,' m
 
 **Parameters**
 
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-| p_logText   | VARCHAR2 | the log text | [`M`](#m)
+| Parameter | Type | API | Description | Required
+| --------- | ---- | --- | ----------- | -------
+| p_processId | NUMBER | process_id | ID of the process to which the session applies | [`M`](#m)
+| p_logText   | VARCHAR2 | log_text | the log text | [`M`](#m)
 
 [↑ Back to Top](#lilam-api-reference)
 
@@ -697,11 +697,11 @@ Returns the number of markers, grouped by their respective action names.
 
 **Parameters**
 
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-| p_actionName | VARCHAR2 | identifier of the action | [`M`](#m)
-| p_contextName | VARCHAR2 | differentiates recurring actions within a session | [`M`](#m)
+| Parameter | Type | JSON | Description | Required
+| --------- | ---- | --- | ----------- | -------
+| p_processId | NUMBER | process_id | ID of the process to which the session applies | [`M`](#m)
+| p_actionName | VARCHAR2 | action_name | identifier of the action | [`M`](#m)
+| p_contextName | VARCHAR2 | context_name | differentiates recurring actions within a session | [`M`](#m)
 
 
 [↑ Back to Top](#lilam-api-reference)
@@ -773,15 +773,15 @@ Note that an active server connection (`NEW_SESSION`) is required. Upon executio
 
 **Parameters**
 
-| Parameter | Type | Description | Required
-| --------- | ---- | ----------- | -------
-| p_processId | NUMBER | ID of the process to which the session applies | [`M`](#m)
-| p_pipeName | VARCHAR2 | pipe name supported by server; no spaces allowed | [`M`](#m)
-| p_password | VARCHAR2 | security for shutdown; | [`M`](#m)
-| p_serverName | VARCHAR2 | servers identity; no spaces allowed | [`M`](#m)
-| p_groupName | VARCHAR2 | group which server is dedicated to; no spaces allowed | [`N`](#n)
-| p_ruleSetName | VARCHAR2 | rules are organized within sets (see [architecture and concepts.md](./architecture%20and%20concepts.md)) | [`M`](#m)
-| p_ruleSetVersion | PLS_INTEGER | version of ruleset | [`M`](#m)
+| Parameter | Type | JSON | Description | Required
+| --------- | ---- | --- | ----------- | -------
+| p_processId | NUMBER | process_id | ID of the process to which the session applies | [`M`](#m)
+| p_pipeName | VARCHAR2 | pipe_name | pipe name supported by server; no spaces allowed | [`M`](#m)
+| p_password | VARCHAR2 | password | security for shutdown; | [`M`](#m)
+| p_serverName | VARCHAR2 | server_name | servers identity; no spaces allowed | [`M`](#m)
+| p_groupName | VARCHAR2 | group_name | group which server is dedicated to; no spaces allowed | [`N`](#n)
+| p_ruleSetName | VARCHAR2 | rule_set_name | rules are organized within sets (see [architecture and concepts.md](./architecture%20and%20concepts.md)) | [`M`](#m)
+| p_ruleSetVersion | PLS_INTEGER | rule_set_version | version of ruleset | [`M`](#m)
 
 [↑ Back to Top](#lilam-api-reference)
 
@@ -840,4 +840,28 @@ TYPE t_process_rec IS RECORD (
     info                VARCHAR2(4000),
     tab_name_master     VARCHAR2(100)
 );
+
+```
+
+### JSON API Interface
+The JSON objects follow a fundamental structure.
+> The parameters header.version and header.client_id are currently not in use
+
+For example, the JSON for calling the SERVER_NEW_SESSION API looks like this:
+
+```json
+{
+  "header": {
+    "version": "v1.x.x",
+    "client_id": "GATE_15",
+    "api_call": "SERVER_NEW_SESSION"
+  },
+  "params": {
+    "process_name": "Your Process Name",
+    "log_level": 3,
+    "steps_todo": 100,
+    "days_to_keep": 20,
+    "tab_name_master": "GATES"
+  }
+}
 ```
