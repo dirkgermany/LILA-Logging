@@ -846,7 +846,7 @@ TYPE t_process_rec IS RECORD (
 
 ### JSON API Interface
 The JSON objects follow a fundamental structure.
-> The header parameters are currently not in use
+> The header parameters version and client_id are currently not in use
 
 For example, the JSON for calling the SERVER_NEW_SESSION API looks like this:
 
