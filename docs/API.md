@@ -41,6 +41,7 @@
   - [Appendix](#appendix)
     - [Log Level](#log-level)
         - [Declaration of Log Levels](#declaration-of-log-levels)
+    - [JSON API Interface](#json-api-interface)
     - [Record Type t_session_init](#record-type-t_session_init)
     - [Record Type t_process_rec](#record-type-t_process_rec)
 
@@ -845,7 +846,7 @@ TYPE t_process_rec IS RECORD (
 
 ### JSON API Interface
 The JSON objects follow a fundamental structure.
-> The parameters header.version and header.client_id are currently not in use
+> The header parameters are currently not in use
 
 For example, the JSON for calling the SERVER_NEW_SESSION API looks like this:
 
