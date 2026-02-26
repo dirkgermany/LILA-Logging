@@ -8,7 +8,7 @@ create or replace PACKAGE BODY LILAM AS
         ---------------------------------------------------------------
         -- JSON as VARCHAR2 for max. performance
         ---------------------------------------------------------------
-        SUBTYPE JSON_OBJ_LILAM IS VARCHAR2(32767);
+        SUBTYPE JSON_OBJ_LILAM IS VARCHAR2(8000);
 
         ---------------------------------------------------------------
         -- Tuning Parameter for development
@@ -284,7 +284,7 @@ create or replace PACKAGE BODY LILAM AS
         -- Erkennung ob ein Prozess auf einem Server läuft
         ---------------------------------------------------------------
         -- Interne Prüfung
-        FUNCTION is_remote(p_processId IN NUMBER) RETURN BOOLEAN IS
+        FUNCTION is_remote(p_processId NUMBER) RETURN BOOLEAN IS
         BEGIN
             RETURN g_remote_sessions.EXISTS(p_processId);
         END is_remote;
@@ -314,7 +314,7 @@ create or replace PACKAGE BODY LILAM AS
         BEGIN
             RETURN TO_TIMESTAMP(p_obj.get_string(p_key), 'YYYY-MM-DD"T"HH24:MI:SS.FF');
         EXCEPTION 
-            WHEN OTHERS THEN RETURN NULL; -- Oder Fehlerhandling
+            WHEN OTHERS THEN raise; --RETURN NULL; -- Oder Fehlerhandling
         END;
         
         function jsonTime(p_json_doc varchar2, jsonPath varchar2) return TIMESTAMP
@@ -322,7 +322,7 @@ create or replace PACKAGE BODY LILAM AS
         begin
             return JSON_VALUE(p_json_doc, '$.' || jsonPath returning TIMESTAMP);
         exception 
-            when others then return null; -- Oder Fehlerbehandlung
+            when others then raise; --return null; -- Oder Fehlerbehandlung
         end;
     
         --------------------------------------------------------------------------
@@ -792,6 +792,8 @@ create or replace PACKAGE BODY LILAM AS
             l_str varchar2(1000);
             l_value varchar2(2000) := trim(valueStr);
         begin
+            if valueStr is null or trim(valueStr) = '' then return p_jsonString; end if;
+            
             if substr(l_value,1,1) != '{' and substr(l_value, -1) != '}' then
                 
             -- Escapen!
@@ -824,6 +826,8 @@ create or replace PACKAGE BODY LILAM AS
         as
             l_str varchar2(1000);
         begin
+            if valueNum is null then return p_jsonString; end if;
+            
             l_str := jsonPutPrep(p_jsonString);
             if p_jsonString is null and substr(valueNum, 1,1) = '{' and substr(valueNum, -1) = '}' then
                 l_str := '"' || jsonKey || '": ' || valueNum;    
@@ -1015,6 +1019,10 @@ create or replace PACKAGE BODY LILAM AS
 
             l_pipeName := getServerPipeForSession(l_processId, null);
             
+            if not l_jsonMain IS JSON then
+                RAISE_APPLICATION_ERROR(-20005, 'Invalid JSON-Format');
+            end if;
+            
             DBMS_PIPE.PACK_MESSAGE(l_jsonMain);
             for i in 1 .. 3 loop
                 l_status := DBMS_PIPE.SEND_MESSAGE(l_pipeName, timeout => p_timeoutSec);
@@ -1039,7 +1047,7 @@ create or replace PACKAGE BODY LILAM AS
             when others then
                 raise;
         end;
-        
+/*        
         procedure sendNoWait(
             p_processId     in number,
             p_request       in varchar2, -- Wird für die Zuordnung/Verzweigung im Server benötigt
@@ -1050,15 +1058,18 @@ create or replace PACKAGE BODY LILAM AS
             l_jsonParams    JSON_OBJ_LILAM;
         begin
             l_jsonParams := p_payload;
-            l_jsonParams := jsonPut(l_jsonParams, 'process_id', p_processId);
+if jsonNumber(l_jsonParams, 'process_id') is null or jsonNumber(l_jsonParams, 'process_id') <= 0 then
+    l_jsonParams := jsonPut(l_jsonParams, 'process_id', p_processId);
+end if;
             sendNoWait(p_request, l_jsonParams, p_timeoutSec);
         end;
-            
+*/            
         --------------------------------------------------------------------------    
         -- global exception handling
         function should_raise_error(p_processId number) return boolean
         as
         begin
+
             -- Die Logik ist hier zentral gekapselt
             if p_processId is not null and v_indexSession.EXISTS(p_processId) 
                and g_sessionList(v_indexSession(p_processId)).log_level >= logLevelDebug 
@@ -1067,7 +1078,9 @@ create or replace PACKAGE BODY LILAM AS
             end if ;
             return false;
         exception
-            when others then return false; -- Sicherheit geht vor
+            when others then 
+            dbms_output.put_line('should raise? ' || sqlErrM);
+            return false; -- Sicherheit geht vor
         end;  
         
         --------------------------------------------------------------------------
@@ -1146,12 +1159,12 @@ create or replace PACKAGE BODY LILAM AS
                     process_start    TIMESTAMP(6),
                     process_end      TIMESTAMP(6),
                     last_update      TIMESTAMP(6),
-                    proc_steps_todo  NUMBER,
-                    proc_steps_done  NUMBER,
+                    proc_steps_todo  NUMBER DEFAULT 0,
+                    proc_steps_done  NUMBER DEFAULT 0,
                     status           NUMBER(2,0),
                     info             VARCHAR2(2000),
                     process_immortal NUMBER(1,0) DEFAULT 0,
-                    tab_name_master  VARCHAR2(100)
+                    tabname_master  VARCHAR2(100)
                 )';
                 sqlStmt := replaceNameMasterTable(sqlStmt, C_PARAM_MASTER_TABLE, p_TabNameMaster);
                 run_sql(sqlStmt);
@@ -1401,7 +1414,7 @@ create or replace PACKAGE BODY LILAM AS
                 status,
                 info,
                 process_immortal,
-                tab_name_master
+                tabname_master
             from PH_MASTER_TABLE
             where id = :PH_PROCESS_ID';
             
@@ -1523,7 +1536,7 @@ create or replace PACKAGE BODY LILAM AS
         
         --------------------------------------------------------------------------
         
-        procedure write_to_log_buffer(p_jsonParams JSON_OBJ_LILAM)
+        procedure writeToLogBuffer(p_jsonParams JSON_OBJ_LILAM)
         as
             l_processId NUMBER;
             v_idx       PLS_INTEGER;
@@ -1562,7 +1575,7 @@ create or replace PACKAGE BODY LILAM AS
         
         --------------------------------------------------------------------------
 
-        procedure write_to_log_buffer(
+        procedure writeToLogBuffer(
             p_processId number, 
             p_level number,
             p_text varchar2,
@@ -1575,12 +1588,13 @@ create or replace PACKAGE BODY LILAM AS
         begin
             p_jsonParams := jsonPut(p_jsonParams, 'process_id', p_processId);
             p_jsonParams := jsonPut(p_jsonParams, 'log_level', p_level);
+            p_jsonParams := jsonPut(p_jsonParams, 'log_time', TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS.FF3'));
             p_jsonParams := jsonPut(p_jsonParams, 'log_text', p_text);
             p_jsonParams := jsonPut(p_jsonParams, 'err_stack', p_errStack);
             p_jsonParams := jsonPut(p_jsonParams, 'err_backtrace', p_errBacktrace);
             p_jsonParams := jsonPut(p_jsonParams, 'err_callstack', p_errCallStack);
             
-            write_to_log_buffer(p_jsonParams);
+            writeToLogBuffer(p_jsonParams);
         end; 
     
         /*
@@ -1589,7 +1603,7 @@ create or replace PACKAGE BODY LILAM AS
         --------------------------------------------------------------------------
         -- Write monitor data to detail table
         --------------------------------------------------------------------------
-        procedure persist_monitor_data(
+        procedure persistMonitorData(
             p_processId    number,
             p_target_table varchar2,
             p_actions      sys.odcivarchar2list,
@@ -1747,7 +1761,7 @@ create or replace PACKAGE BODY LILAM AS
         
             -- 5. Persistieren
             if v_actions.COUNT > 0 then
-                persist_monitor_data(
+                persistMonitorData(
                     p_processId    => p_processId,
                     p_target_table => v_targetTable,
                     p_actions      => v_actions,
@@ -1851,7 +1865,7 @@ create or replace PACKAGE BODY LILAM AS
                      ' used ' || p_used_time || 'ms (expected: ' || p_expected || 'ms)';
                      
             -- Log to Buffer
-            write_to_log_buffer(
+            writeToLogBuffer(
                 p_processId, 
                 logLevelMonitor,
                 l_msg,
@@ -1877,7 +1891,8 @@ create or replace PACKAGE BODY LILAM AS
                 returning varchar2
             )
             into l_payload from dual;
-            sendNoWait(p_processId, 'START_TRACE', l_payload, 0.5);
+            sendNoWait('START_TRACE', l_payload, 0.5);
+--            sendNoWait(p_processId, 'START_TRACE', l_payload, 0.5);
                     
         EXCEPTION
             WHEN OTHERS THEN
@@ -1905,7 +1920,8 @@ create or replace PACKAGE BODY LILAM AS
                 returning varchar2
             )
             into l_payload from dual;
-            sendNoWait(p_processId, 'STOP_TRACE', l_payload, 0.5);
+            sendNoWait('STOP_TRACE', l_payload, 0.5);
+--            sendNoWait(p_processId, 'STOP_TRACE', l_payload, 0.5);
                     
         EXCEPTION
             WHEN OTHERS THEN
@@ -1935,7 +1951,8 @@ create or replace PACKAGE BODY LILAM AS
                 returning varchar2
             )
             into l_payload from dual;
-            sendNoWait(p_processId, 'MARK_EVENT', l_payload, 0.5);
+            sendNoWait('MARK_EVENT', l_payload, 0.5);
+--            sendNoWait(p_processId, 'MARK_EVENT', l_payload, 0.5);
                     
         EXCEPTION
             WHEN OTHERS THEN
@@ -2193,8 +2210,9 @@ create or replace PACKAGE BODY LILAM AS
 
         PROCEDURE MARK_EVENT(p_processId NUMBER, p_actionName VARCHAR2, p_contextName VARCHAR2 default NULL, p_timestamp timestamp default NULL)
         as
+            l_jsonParams JSON_OBJ_LILAM;
         begin
-            writeEventToMonitorBuffer (p_processId, p_actionName, p_contextName, p_timestamp);     
+            writeEventToMonitorBuffer (p_processId, p_actionName, p_contextName, p_timestamp);
         end;
         
         --------------------------------------------------------------------------
@@ -2207,7 +2225,7 @@ create or replace PACKAGE BODY LILAM AS
                 p_processId   => jsonNumber(p_jsonObj, 'process_id'),
                 p_actionName  => jsonString(p_jsonObj, 'action_name'),
                 p_contextName => jsonString(p_jsonObj, 'context_name'),
-                p_timeStamp   => jsonTime(p_jsonObj, 'timestamp')
+                p_timeStamp   => jsonTime(p_jsonObj, 'start_time')
             );
         end;
         
@@ -2386,7 +2404,7 @@ create or replace PACKAGE BODY LILAM AS
                 process_immortal = :PH_IMMORTAL
             where id = :PH_PROCESS_ID';  
     
-            sqlStatement := replaceNameMasterTable(sqlStatement, C_PARAM_MASTER_TABLE, p_process_rec.tab_name_master);        
+            sqlStatement := replaceNameMasterTable(sqlStatement, C_PARAM_MASTER_TABLE, p_process_rec.tabname_master);        
             execute immediate sqlStatement
             USING   p_process_rec.status, 
                     p_process_rec.process_end,
@@ -2492,7 +2510,7 @@ create or replace PACKAGE BODY LILAM AS
                 log_level,
                 info,
                 process_immortal,
-                tab_name_master
+                tabname_master
             )
             values (
                 :PH_PROCESS_ID, 
@@ -2633,12 +2651,7 @@ create or replace PACKAGE BODY LILAM AS
             l_jsonPayload  JSON_OBJ_LILAM;
             l_jsonHeader   JSON_OBJ_LILAM;
         begin
-dbms_output.enable();
-dbms_output.put_line('------------------ CLOSE_SESSIONREMOTE ------------------ ');
-dbms_output.put_line('l_jsonParams: ' || p_jsonParams);
---            l_jsonParams := p_jsonObj.get_object('params');
             l_jsonResponse := waitForResponse(p_processId, 'CLOSE_SESSION', p_jsonParams, 1);
-dbms_output.put_line('--------- nach waitForResponse -------- ');
             l_jsonHeader := jsonObject(l_jsonResponse, 'header');
         
             if jsonString(l_jsonHeader, 'status') in ('TIMEOUT', 'THROTTLED', 'ERROR') then
@@ -2659,23 +2672,23 @@ dbms_output.put_line('--------- nach waitForResponse -------- ');
 
         procedure procStepDoneRemote(p_processId number)
         as
-            l_serverMsg varchar2(100);
             l_jsonParams JSON_OBJ_LILAM;
         begin
             l_jsonParams := jsonPut(l_jsonParams, 'process_id', p_processId);
-            sendNoWait(p_processId, 'PROC_STEP_DONE', l_jsonParams, 0.5);
+            sendNoWait('PROC_STEP_DONE', l_jsonParams, 0.5);
+--            sendNoWait(p_processId, 'PROC_STEP_DONE', l_jsonParams, 0.5);
         end;
         --------------------------------------------------------------------------
         
         procedure setAnyStatusRemote(p_processId number, p_jsonParams JSON_OBJ_LILAM)
         as
         begin
-            sendNoWait(p_processId, 'SET_ANY_STATUS', p_jsonParams, 0.5);
+            sendNoWait('SET_ANY_STATUS', p_jsonParams, 0.5);
+--            sendNoWait(p_processId, 'SET_ANY_STATUS', p_jsonParams, 0.5);
         end;
 
         procedure setAnyStatusRemote(p_processId number, p_status pls_integer, p_processInfo varchar2, p_procStepsToDo pls_integer, p_procStepsDone pls_integer, p_immortal pls_integer)
         as
-            l_serverMsg varchar2(100);
             l_jsonParams JSON_OBJ_LILAM;
         begin
             l_jsonParams := jsonPut(l_jsonParams, 'process_id', p_processId);
@@ -2690,7 +2703,7 @@ dbms_output.put_line('--------- nach waitForResponse -------- ');
 
         --------------------------------------------------------------------------
         
-        procedure log_anyRemote(p_jsonParams VARCHAR2)
+        procedure log_anyRemote(p_jsonParams JSON_OBJ_LILAM)
         as
         begin
             sendNoWait('LOG_ANY', p_jsonParams, 0.5);
@@ -2698,45 +2711,41 @@ dbms_output.put_line('--------- nach waitForResponse -------- ');
         
         procedure log_anyRemote(p_processId number, p_level number, p_logText varchar2, p_errStack varchar2, p_errBacktrace varchar2, p_errCallstack varchar2)
         as
-            l_payload varchar2(32767); -- Puffer für den JSON-String
+            l_jsonPayload JSON_OBJ_LILAM; -- Puffer für den JSON-String
         begin
-            -- Erzeugung des JSON-Objekts
-            select json_object(
-                'process_id'    value p_processId,
-                'level'         value p_level,
-                'log_text'      value p_logText,
-                'err_stack'     value p_errStack,
-                'err_backtr'    value p_errBacktrace,
-                'err_callstack' value p_errCallstack
-                returning varchar2
-            )
-            into l_payload from dual;
-            sendNoWait(p_processId, 'LOG_ANY', l_payload, 0.5);
+            l_jsonPayload := jsonPut(l_jsonPayload, 'process_id', p_processId);
+            l_jsonPayload := jsonPut(l_jsonPayload, 'level', p_level);
+            l_jsonPayload := jsonPut(l_jsonPayload, 'log_text', p_logText);
+            l_jsonPayload := jsonPut(l_jsonPayload, 'err_stack', p_errStack);
+            l_jsonPayload := jsonPut(l_jsonPayload, 'err_backtr', p_errBacktrace);
+            l_jsonPayload := jsonPut(l_jsonPayload, 'err_callstack', p_errCallstack);
+            
+            log_anyRemote(l_jsonPayload);
+--            sendNoWait(p_processId, 'LOG_ANY', l_payload, 0.5);
                     
         EXCEPTION
             WHEN OTHERS THEN
                 if should_raise_error(p_processId) then
                     raise;
                 end if ;
-    
         end;
         
         --------------------------------------------------------------------------
         
-        procedure log_any(p_jsonParams VARCHAR2)
+        procedure log_any(p_jsonParams JSON_OBJ_LILAM)
         as
             l_processId NUMBER;
+            l_jsonParams JSON_OBJ_LILAM := p_jsonParams;
         begin
-            l_processId := jsonNumber(p_jsonParams, 'process_id');
-            
+            l_processId := jsonNumber(l_jsonParams, 'process_id');
             if is_remote(l_processId) then
-                log_anyRemote(p_jsonParams);
+                log_anyRemote(l_jsonParams);
                 return;
             end if ;
-    
+
             -- Hier nur weiter, wenn nicht remote
-            if v_indexSession.EXISTS(l_processId) and jsonNumber(p_jsonParams, 'log_level') <= g_sessionList(v_indexSession(l_processId)).log_level then
-                write_to_log_buffer(p_jsonParams);
+            if v_indexSession.EXISTS(l_processId) and jsonNumber(l_jsonParams, 'log_level') <= g_sessionList(v_indexSession(l_processId)).log_level then
+                writeToLogBuffer(l_jsonParams);
             end if ;
     
             sync_all_dirty;
@@ -2774,7 +2783,7 @@ dbms_output.put_line('--------- nach waitForResponse -------- ');
     
             -- Hier nur weiter, wenn nicht remote
             if v_indexSession.EXISTS(p_processId) and p_level <= g_sessionList(v_indexSession(p_processId)).log_level then
-                write_to_log_buffer(p_jsonParams);
+                writeToLogBuffer(p_jsonParams);
             end if ;
     
             sync_all_dirty;
@@ -2795,9 +2804,10 @@ dbms_output.put_line('--------- nach waitForResponse -------- ');
     
         procedure DEBUG(p_jsonObj VARCHAR2)
         as
-            l_jsonObj VARCHAR2(4000) := p_jsonObj;
+            l_jsonObj JSON_OBJ_LILAM := p_jsonObj;
         begin
             l_jsonObj := jsonPut(p_jsonObj, 'log_level', logLevelDebug);
+            l_jsonObj := jsonPut(l_jsonObj, 'log_time', TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS.FF3'));
             log_any(l_jsonObj);
         end;
         
@@ -2805,22 +2815,23 @@ dbms_output.put_line('--------- nach waitForResponse -------- ');
         -- Details are adjusted to the debug level
         procedure DEBUG(p_processId number, p_logText varchar2)
         as
-            l_jsonObj VARCHAR2(4000);
+            l_jsonObj JSON_OBJ_LILAM;
         begin
             l_jsonObj := jsonPut(l_jsonObj, 'process_id', p_processId);
-            l_jsonObj := jsonPut(l_jsonObj, 'log_level', logLevelDebug);
             l_jsonObj := jsonPut(l_jsonObj, 'log_text', p_logText);
-            l_jsonObj := jsonPut(l_jsonObj, 'err_callstack', DBMS_UTILITY.FORMAT_CALL_STACK);
-            log_any(l_jsonObj);
+            l_jsonObj := jsonPut(l_jsonObj, 'err_stack', DBMS_UTILITY.FORMAT_CALL_STACK);
+            DEBUG(l_jsonObj);
         end;
     
         --------------------------------------------------------------------------
         
-        procedure INFO(p_jsonObj VARCHAR2)
+        procedure INFO(p_jsonObj JSON_OBJ_LILAM)
         as
-            l_jsonObj VARCHAR2(4000) := p_jsonObj;
+            l_jsonObj JSON_OBJ_LILAM := p_jsonObj;
         begin
             l_jsonObj := jsonPut(l_jsonObj, 'log_level', logLevelInfo);
+            l_jsonObj := jsonPut(l_jsonObj, 'log_time', TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS.FF3'));
+
             log_any(l_jsonObj);
         end;
     
@@ -2828,21 +2839,21 @@ dbms_output.put_line('--------- nach waitForResponse -------- ');
         -- Details are adjusted to the info level
         procedure INFO(p_processId number, p_logText varchar2)
         as
-            l_jsonObj VARCHAR2(200);
+            l_jsonObj JSON_OBJ_LILAM;
         begin
-            l_jsonObj := jsonPut(l_jsonObj, 'log_level', logLevelInfo);
             l_jsonObj := jsonPut(l_jsonObj, 'process_id', p_processId);
             l_jsonObj := jsonPut(l_jsonObj, 'log_text', p_logText);
-            log_any(l_jsonObj);
+            INFO(l_jsonObj);
         end;
     
         --------------------------------------------------------------------------
         
-        procedure ERROR(p_jsonObj VARCHAR2)
+        procedure ERROR(p_jsonObj JSON_OBJ_LILAM)
         as
-            l_jsonObj VARCHAR2(4000) := p_jsonObj;
+            l_jsonObj JSON_OBJ_LILAM := p_jsonObj;
         begin
             l_jsonObj := jsonPut(l_jsonObj, 'log_level', logLevelError);
+            l_jsonObj := jsonPut(l_jsonObj, 'log_time', TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS.FF3'));
             log_any(l_jsonObj);
         end;
     
@@ -2850,24 +2861,24 @@ dbms_output.put_line('--------- nach waitForResponse -------- ');
         -- Details are adjusted to the error level
         procedure ERROR(p_processId number, p_logText varchar2)
         as
+            l_jsonObj JSON_OBJ_LILAM;
         begin
-            log_any(
-                p_processId, 
-                logLevelDebug,
-                p_logText,
-                DBMS_UTILITY.FORMAT_ERROR_STACK,
-                DBMS_UTILITY.FORMAT_ERROR_BACKTRACE,
-                DBMS_UTILITY.FORMAT_CALL_STACK
-            );
+            l_jsonObj := jsonPut(l_jsonObj, 'process_id', p_processId);
+            l_jsonObj := jsonPut(l_jsonObj, 'log_text', p_logText);
+            l_jsonObj := jsonPut(l_jsonObj, 'err_stack', DBMS_UTILITY.FORMAT_ERROR_STACK);
+            l_jsonObj := jsonPut(l_jsonObj, 'err_backtr', DBMS_UTILITY.FORMAT_ERROR_BACKTRACE);
+            l_jsonObj := jsonPut(l_jsonObj, 'err_callstack', DBMS_UTILITY.FORMAT_CALL_STACK);
+            ERROR(l_jsonObj);
         end;
     
         --------------------------------------------------------------------------
         
-        procedure WARN(p_jsonObj VARCHAR2)
+        procedure WARN(p_jsonObj JSON_OBJ_LILAM)
         as
-            l_jsonObj VARCHAR2(4000);
+            l_jsonObj JSON_OBJ_LILAM := p_jsonObj;
         begin
             l_jsonObj := jsonPut(l_jsonObj, 'log_level', logLevelWarn);
+            l_jsonObj := jsonPut(l_jsonObj, 'log_time', TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS.FF3'));
             log_any(l_jsonObj);
         end;
     
@@ -2877,10 +2888,9 @@ dbms_output.put_line('--------- nach waitForResponse -------- ');
         as
             l_jsonObj VARCHAR2(4000);
         begin
-            l_jsonObj := jsonPut(l_jsonObj, 'process_id', p_processId);
             l_jsonObj := jsonPut(l_jsonObj, 'log_level', logLevelInfo);
             l_jsonObj := jsonPut(l_jsonObj, 'log_text', p_logText);
-            log_any(l_jsonObj);
+            WARN(l_jsonObj);
         end;
          
         --------------------------------------------------------------------------
@@ -2889,8 +2899,6 @@ dbms_output.put_line('--------- nach waitForResponse -------- ');
         as
             l_processRec t_process_rec;
         begin
-dbms_output.enable();
-dbms_output.put_line('-----> setAnyStatus... p_jsonParams : ' || p_jsonParams); 
 
             l_processRec.id := jsonNumber(p_jsonParams, 'process_id');
             l_processRec.status := jsonNumber(p_jsonParams, 'status');
@@ -2899,16 +2907,12 @@ dbms_output.put_line('-----> setAnyStatus... p_jsonParams : ' || p_jsonParams);
             l_processRec.proc_steps_done := jsonNumber(p_jsonParams, 'steps_done');
             l_processRec.proc_immortal := jsonNumber(p_jsonParams, 'process_immortal');
             
-dbms_output.put_line('###################### INFO');
-dbms_output.put_line(l_processRec.info);
             if is_remote(l_processRec.id) then
                 setAnyStatusRemote(l_processRec.id, l_processRec.status, l_processRec.info, l_processRec.proc_steps_todo, l_processRec.proc_steps_done, l_processRec.proc_immortal);
                 return;
             end if ;
             
             if v_indexSession.EXISTS(l_processRec.id) then
-dbms_output.put_line('################### ---- EXISTS');
-dbms_output.put_line('******************* info: ' || l_processRec.info);
                 if l_processRec.status          is not null then g_process_cache(l_processRec.id).status          := l_processRec.status; end if ;
                 if l_processRec.info            is not null then g_process_cache(l_processRec.id).info            := l_processRec.info; end if ;
                 if l_processRec.proc_steps_todo is not null then g_process_cache(l_processRec.id).proc_steps_todo := l_processRec.proc_steps_todo; end if ;
@@ -2919,9 +2923,7 @@ dbms_output.put_line('******************* info: ' || l_processRec.info);
                 g_dirty_queue(l_processRec.id) := TRUE; -- Damit SYNC_ALL_DIRTY die Session sieht
                 
                 evaluateRules(g_process_cache(l_processRec.id), C_PROCESS_UPDATE);
-dbms_output.put_line('jafjaslkjasfjsfjs    NACH evaluateRules');
                 SYNC_ALL_DIRTY;
-dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
                 
             end if ;
             
@@ -3030,11 +3032,11 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
         
         --------------------------------------------------------------------------
 
-        procedure PROC_STEP_DONE(p_jsonParams VARCHAR2)
+        procedure PROC_STEP_DONE(p_jsonParams JSON_OBJ_LILAM)
         as
             l_steps number;
             l_processId NUMBER;
-            l_jsonParams VARCHAR2(100);
+            l_jsonParams JSON_OBJ_LILAM;
         begin
             l_processId := jsonNumber(p_jsonParams, 'process_id');            
             if is_remote(l_processId) then
@@ -3042,11 +3044,10 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
                 return;
             end if ;
             
-            
-                        
             if v_indexSession.EXISTS(l_processId) then
                 l_steps := nvl(g_process_cache(l_processId).proc_steps_done, 0) + 1;
                 l_jsonParams := jsonPut(l_jsonParams, 'steps_done', l_steps);
+                l_jsonParams := jsonPut(l_jsonParams, 'process_id', l_processId);
                 setAnyStatus(l_jsonParams);   
             end if;           
         end;
@@ -3089,7 +3090,7 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
                 l_process_rec.status            := jsonNumber(l_jsonPayload, 'status');
                 l_process_rec.proc_steps_todo   := jsonNumber(l_jsonPayload, 'steps_todo');
                 l_process_rec.proc_steps_done   := jsonNumber(l_jsonPayload, 'steps_done');
-                l_process_rec.tab_name_master   := jsonNumber(l_jsonPayload, 'tabname_master');
+                l_process_rec.tabname_master   := jsonNumber(l_jsonPayload, 'tabname_master');
             end if ; 
             
             return l_process_rec;
@@ -3276,7 +3277,7 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
                     v_msg := 'OPEN TRACE ALERT (Trace purged): Process_ID=>' || p_processId || '; Action=>' || g_monitor_shadows(v_key).action_name ||
                     '; Context=>' || g_monitor_shadows(v_key).context_name || '; Start=>' || g_monitor_shadows(v_key).start_time;                     
                     -- Log to Buffer
-                    write_to_log_buffer(
+                    writeToLogBuffer(
                         p_processId, 
                         logLevelWarn,
                         v_msg,
@@ -3309,14 +3310,14 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
         
         --------------------------------------------------------------------------
         
-        procedure CLOSE_SESSION(p_jsonObject JSON_OBJECT_T)
+        procedure CLOSE_SESSION(p_jsonObject JSON_OBJ_LILAM)
         as
             l_processId NUMBER;
             v_idx PLS_INTEGER;
         begin
-            l_processId := p_jsonObject.get_number('process_id');
+            l_processId := jsonNumber(p_jsonObject, 'process_id');
             if is_remote(l_processId) then
-                close_sessionRemote(l_processId, p_jsonObject.to_string());
+                close_sessionRemote(l_processId, p_jsonObject);
                 g_remote_sessions.delete(l_processId);
                 return;
             end if ;
@@ -3330,7 +3331,9 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
                 evaluateRules(g_process_cache(l_processId), C_PROCESS_STOP);
                 
                 v_idx := v_indexSession(l_processId);
-                persist_close_session(l_processId,  g_sessionList(v_idx).tabName_master, p_jsonObject.get_number('steps_todo'),  p_jsonObject.get_number('steps_done'), p_jsonObject.get_string('info'), p_jsonObject.get_number('status'));
+                persist_close_session(l_processId,  g_sessionList(v_idx).tabName_master, jsonNumber(p_jsonObject, 'steps_todo'), 
+                    jsonNumber(p_jsonObject, 'steps_done'), 
+                    jsonString(p_jsonObject, 'info'), jsonNumber(p_jsonObject, 'status'));
                 checkLogsBuffer(l_processId, 'vor clearAllSessionData');
                 clearAllSessionData(l_processId);
                 checkLogsBuffer(l_processId, 'nach clearAllSessionData');
@@ -3405,25 +3408,25 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
             l_session_init.proc_stepsToDo := jsonNumber(p_jsonParams, 'steps_todo');
             l_session_init.daysToKeep := jsonNumber(p_jsonParams, 'days_to_keep');
             l_session_init.procImmortal := jsonNumber(p_jsonParams, 'process_immortal');
-            l_session_init.tab_name_master := jsonString(p_jsonParams, 'tab_name_master');
+            l_session_init.tabname_master := jsonString(p_jsonParams, 'tabname_master');
                
            -- if silent log mode don't do anything
             --if p_session_init.logLevel > logLevelSilent then
                 -- Sicherstellen, dass die LOG-Tabellen existieren
-            createLogTables(l_session_init.tab_name_master);
+            createLogTables(l_session_init.tabname_master);
             --end if ;
     
             execute immediate 'select seq_lilam_log.nextVal from dual' into p_processId;
             -- persist to session internal table
-            insertSession (l_session_init.tab_name_master, p_processId, l_session_init.logLevel);
+            insertSession (l_session_init.tabname_master, p_processId, l_session_init.logLevel);
             deleteOldLogs(p_processId, upper(trim(l_session_init.processName)), l_session_init.daysToKeep);
             
             persist_new_session(p_processId, l_session_init.processName, l_session_init.logLevel,  
-            l_session_init.proc_stepsToDo, l_session_init.daysToKeep, l_session_init.procImmortal, l_session_init.tab_name_master);
+            l_session_init.proc_stepsToDo, l_session_init.daysToKeep, l_session_init.procImmortal, l_session_init.tabname_master);
     
             -- copy new details data to memory
             v_new_rec.id              := p_processId;
-            v_new_rec.tab_name_master := l_session_init.tab_name_master;
+            v_new_rec.tabname_master := l_session_init.tabname_master;
             v_new_rec.process_name    := l_session_init.processName;
             v_new_rec.process_start   := current_timestamp;
             v_new_rec.process_end     := null;
@@ -3443,14 +3446,14 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
         
         FUNCTION NEW_SESSION(p_session_init t_session_init) RETURN NUMBER
         as
-            v_jsonParams VARCHAR2(200);
+            v_jsonParams JSON_OBJ_LILAM;
         begin
             v_jsonParams := jsonPut(v_jsonParams, 'process_name', p_session_init.processName);
             v_jsonParams := jsonPut(v_jsonParams, 'log_level', p_session_init.logLevel);
             v_jsonParams := jsonPut(v_jsonParams, 'steps_todo', p_session_init.proc_stepsToDo);
             v_jsonParams := jsonPut(v_jsonParams, 'days_to_keep', p_session_init.daysToKeep);
             v_jsonParams := jsonPut(v_jsonParams, 'process_immortal', p_session_init.procImmortal);
-            v_jsonParams := jsonPut(v_jsonParams, 'tab_name_master', p_session_init.tab_name_master);
+            v_jsonParams := jsonPut(v_jsonParams, 'tabname_master', p_session_init.tabname_master);
             
             return NEW_SESSION(v_jsonParams);
         end;
@@ -3458,13 +3461,13 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
         
         FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster varchar2 default 'LILAM_LOG') return number
         as
-            v_jsonParams VARCHAR2(200);
+            v_jsonParams JSON_OBJ_LILAM;
         begin
             v_jsonParams := jsonPut(v_jsonParams, 'process_name', p_processName);
             v_jsonParams := jsonPut(v_jsonParams, 'log_level', p_logLevel);
             v_jsonParams := jsonPut(v_jsonParams, 'steps_todo', p_procStepsToDo);
             v_jsonParams := jsonPut(v_jsonParams, 'days_to_keep', p_daysToKeep);
-            v_jsonParams := jsonPut(v_jsonParams, 'tab_name_master', p_tabNameMaster);
+            v_jsonParams := jsonPut(v_jsonParams, 'tabname_master', p_tabNameMaster);
         
             return new_session(v_jsonParams);
         end;
@@ -3473,10 +3476,11 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
     
         function NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_tabNameMaster varchar2 default 'LILAM_LOG') return number
         as
-            v_jsonParams VARCHAR2(200);
+            v_jsonParams JSON_OBJ_LILAM;
         begin
             v_jsonParams := jsonPut(v_jsonParams, 'process_name', p_processName);
-            v_jsonParams := jsonPut(v_jsonParams, 'tab_name_master', p_tabNameMaster);
+            v_jsonParams := jsonPut(v_jsonParams, 'log_level', p_logLevel);
+            v_jsonParams := jsonPut(v_jsonParams, 'tabname_master', p_tabNameMaster);
         
             return new_session(v_jsonParams);
         end;
@@ -3486,24 +3490,24 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
         -- which is recommended for all following actions (e.g. CLOSE_SESSION, DEBUG, SET_PROCESS_STATUS).
         function NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_daysToKeep number, p_tabNameMaster varchar2 default 'LILAM_LOG') return number
         as
-            v_jsonParams VARCHAR2(200);
+            v_jsonParams JSON_OBJ_LILAM;
         begin
             v_jsonParams := jsonPut(v_jsonParams, 'process_name', p_processName);
             v_jsonParams := jsonPut(v_jsonParams, 'log_level', p_logLevel);
             v_jsonParams := jsonPut(v_jsonParams, 'days_to_keep', p_daysToKeep);
-            v_jsonParams := jsonPut(v_jsonParams, 'tab_name_master', p_tabNameMaster);
+            v_jsonParams := jsonPut(v_jsonParams, 'tabname_master', p_tabNameMaster);
         
             return new_session(v_jsonParams);
         end;
             
         --------------------------------------------------------------------------
         
-        function extractClientChannel(p_json_doc varchar2) return varchar2
+        function extractClientChannel(p_jsonObj JSON_OBJ_LILAM) return varchar2
         as
-            p_json JSON_OBJECT_T := JSON_OBJECT_T();
+            l_json JSON_OBJ_LILAM;
         begin
-            p_json := JSON_OBJECT_T.parse(p_json_doc);
-            return p_json.get_object('header').get_string('client_pipe');
+            l_json := jsonObject(p_jsonObj, 'header');
+            return jsonString(l_json, 'client_pipe');
         end;        
         
         --------------------------------------------------------------------------
@@ -3604,13 +3608,10 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
 
         procedure doRemote_procStepDone(p_message varchar2)
         as
-            l_processId     NUMBER;
-            l_payload varchar2(1600);
+            l_payload   JSON_OBJ_LILAM;
         begin
-            l_payload := JSON_QUERY(p_message, '$.payload');
-            l_processId  := jsonNumber(l_payload, 'process_id');
-            
-            PROC_STEP_DONE(l_processId);
+            l_payload := jsonObject(p_message, 'payload');
+            PROC_STEP_DONE(l_payload);
         end;
         
         --------------------------------------------------------------------------
@@ -3625,15 +3626,8 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
             l_errCallstack varchar2(1000);
             l_payload varchar2(1600);
         begin
-            l_payload := JSON_QUERY(p_message, '$.payload');
-            l_processId := jsonNumber(l_payload, 'process_id');
-            l_level := jsonNumber(l_payload, 'level');
-            l_logText := jsonString(l_payload, 'log_text');
-            l_errStack := jsonString(l_payload, 'err_stack');
-            l_errBacktrace := jsonString(l_payload, 'err_backtr');
-            l_errCallstack := jsonString(l_payload, 'err_callstack');
-            
-            log_any(l_processId, l_level, l_logText, l_errStack, l_errBacktrace, l_errCallstack);
+            l_payload := jsonObject(p_message, 'payload');          
+            log_any(l_payload);
         end;
     
         -------------------------------------------------------------------------- 
@@ -3645,36 +3639,21 @@ dbms_output.put_line('ddkdkdfjsdaöaöal  s  NACH SYNC_ALL_DIRTY');
             l_procStepsDone   PLS_INTEGER; 
             l_processInfo varchar2(1000);
             l_status      PLS_INTEGER;
-            l_header    varchar2(100);
-            l_meta      varchar2(100);
-            l_data      varchar2(1500);
-            l_msg       VARCHAR2(4000);
-            
-            l_jsonMain   JSON_OBJECT_T := JSON_OBJECT_T();
-            l_jsonHeader JSON_OBJECT_T := JSON_OBJECT_T();
-            l_jsonParams JSON_OBJECT_T := JSON_OBJECT_T();
-        begin
-            l_jsonMain := JSON_OBJECT_T.parse(p_message);
-            l_jsonHeader := l_jsonMain.get_object('header');
-            l_jsonParams := l_jsonMain.get_object('params');
 
-            l_processId   := l_jsonParams.get_number('process_id');
-            l_procStepsToDo   := l_jsonParams.get_number('steps_todo');
-            l_procStepsDone   := l_jsonParams.get_number('steps_done');
-            l_processInfo := l_jsonParams.get_number('info');
-            l_status      := l_jsonParams.get_number('status');
-            
-            l_header := '"header":{"msg_type":"SERVER_RESPONSE", "msg_name":"CLOSE_SESSION"}';
-            l_meta   := '"meta":{"server_version":"' || LILAM_VERSION || '"}';
-            l_data   := '"payload":{"server_message":"' || TXT_ACK_OK || '","server_code": ' || get_serverCode(TXT_ACK_OK);
-            l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
+            l_jsonHeader JSON_OBJ_LILAM;
+            l_jsonParams JSON_OBJ_LILAM;
+        begin
+            l_jsonHeader := jsonObject(p_message, 'header');
+            l_jsonParams := jsonObject(p_message, 'params');
+
+            l_processId     := jsonNumber(l_jsonParams, 'process_id');
+            l_procStepsToDo := jsonNumber(l_jsonParams, 'steps_todo');
+            l_procStepsDone := jsonNumber(l_jsonParams, 'steps_done');
+            l_processInfo   := jsonString(l_jsonParams, 'info');
+            l_status        := jsonNumber(l_jsonParams, 'status');
     
-dbms_output.enable();
-dbms_output.put_line('VOR CLOSE_SESSION: header = ' || l_jsonHeader.to_string());
-dbms_output.put_line('                   params = ' || l_jsonParams.to_string());
             checkLogsBuffer(l_processId, 'vor CLOSE_SESSION');
             CLOSE_SESSION(l_jsonParams);
-            CLOSE_SESSION(l_processId, l_procStepsToDo, l_procStepsDone, l_processInfo, l_status);
             checkLogsBuffer(l_processId, 'nach CLOSE_SESSION');
             
             DBMS_PIPE.RESET_BUFFER; -- Koffer leeren
@@ -3759,9 +3738,10 @@ dbms_output.put_line('                   params = ' || l_jsonParams.to_string())
             
         exception
             when others then
+                if should_raise_error(l_processId) then
+                    raise;
+                end if;
                 null;
---                dbms_output.enable();
---                dbms_output.put_line('Fehler in doRemote_getMonitorLastEntry: ' || sqlErrM);
         end;    
 
         -------------------------------------------------------------------------- 
@@ -3790,7 +3770,7 @@ dbms_output.put_line('                   params = ' || l_jsonParams.to_string())
                 'status'    value l_process_rec.status,
                 'steps_todo'   value l_process_rec.proc_steps_todo,
                 'steps_done'   value l_process_rec.proc_steps_done,
-                'tabname_master'    value l_process_rec.tab_name_master
+                'tabname_master'    value l_process_rec.tabname_master
                 returning varchar2
             )
             into l_payload from dual;   
@@ -3807,9 +3787,10 @@ dbms_output.put_line('                   params = ' || l_jsonParams.to_string())
             
         exception
             when others then
+                if should_raise_error(l_processId) then
+                    raise;
+                end if;
                 null;
---                dbms_output.enable();
---                dbms_output.put_line('Fehler in doRemote_getProcessData: ' || sqlErrM);
         end;    
 
         -------------------------------------------------------------------------- 
@@ -3841,9 +3822,8 @@ dbms_output.put_line('                   params = ' || l_jsonParams.to_string())
             
         exception
             when others then
+--                    raise;
                 null;
---                dbms_output.enable();
---                dbms_output.put_line('Fehler in doRemote_unfreezeClient: ' || sqlErrM);
         end;    
         
         -------------------------------------------------------------------------- 
@@ -3857,7 +3837,6 @@ dbms_output.put_line('                   params = ' || l_jsonParams.to_string())
         begin
             l_reqParams := jsonObject(p_message, 'params');
             l_processId := NEW_SESSION(l_reqParams);
-dbms_output.put_line('::: l_processId : ' || l_processId);
             l_jsonResp := jsonPut(l_jsonResp, 'process_id', l_processId);
             DBMS_PIPE.RESET_BUFFER;
             DBMS_PIPE.PACK_MESSAGE(l_jsonResp);        
@@ -3894,7 +3873,8 @@ dbms_output.put_line('::: l_processId : ' || l_processId);
             l_slotIdx    PLS_INTEGER;
         begin
             l_message := '{"rule_set_name":"' || p_ruleSetName || '", "rule_set_version":"' || p_ruleSetVersion || '"}';
-            sendNoWait(p_processId, 'UPDATE_RULE', l_message, C_TIMEOUT_NEW_SESSION);               
+            sendNoWait('UPDATE_RULE', l_message, C_TIMEOUT_NEW_SESSION);               
+--            sendNoWait(p_processId, 'UPDATE_RULE', l_message, C_TIMEOUT_NEW_SESSION);               
         end;
         
         -------------------------------------------------------------------------- 
@@ -3942,19 +3922,18 @@ dbms_output.put_line('::: l_processId : ' || l_processId);
             return getServerPipeForSession(p_processId, null);
         end;
 
+        --------------------------------------------------------------------------
+        
         FUNCTION SERVER_NEW_SESSION(p_jsonObj JSON_OBJ_LILAM) RETURN NUMBER
         as
             l_ProcessId number(19,0) := -500;   
             l_response  varchar2(100); 
             l_jsonParams JSON_OBJ_LILAM := p_jsonObj;
         begin
-            if jsonString(l_jsonParams, 'tab_name_master') is null then
-                l_jsonParams := jsonPut(l_jsonParams, 'tab_name_master', 'LILAM_LOG');
+            if jsonString(l_jsonParams, 'tabname_master') is null then
+                l_jsonParams := jsonPut(l_jsonParams, 'tabname_master', 'LILAM_LOG');
             end if;
                 
-dbms_output.enable();
-dbms_output.put_line('-----------------------  SERVER_NEW_SESSION');
-dbms_output.put_line('..... json: ' || l_jsonParams);
             -- zunächst mal schauen, welche Server bereitstehen
             l_response := waitForResponse(null, 'NEW_SESSION', l_jsonParams, C_TIMEOUT_NEW_SESSION);
 
@@ -3985,23 +3964,23 @@ dbms_output.put_line('..... json: ' || l_jsonParams);
         end;
         --------------------------------------------------------------------------
         
-        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2
+        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2 default 'REMOTE_LOG') RETURN VARCHAR2
         as
-            l_sonParams VARCHAR2(500);
+            l_jsonParams JSON_OBJ_LILAM;
         begin
-            l_sonParams := jsonPut(l_sonParams, 'process_name', p_processName);
-            l_sonParams := jsonPut(l_sonParams, 'log_level', p_logLevel);
-            l_sonParams := jsonPut(l_sonParams, 'proc_steps_todo', p_procStepsToDo);
-            l_sonParams := jsonPut(l_sonParams, 'days_to_keep', p_daysToKeep);
-            l_sonParams := jsonPut(l_sonParams, 'tabname_master', p_tabNameMaster);                           
-            return server_new_session(l_sonParams);
+            l_jsonParams := jsonPut(l_jsonParams, 'process_name', p_processName);
+            l_jsonParams := jsonPut(l_jsonParams, 'log_level', p_logLevel);
+            l_jsonParams := jsonPut(l_jsonParams, 'proc_steps_todo', p_procStepsToDo);
+            l_jsonParams := jsonPut(l_jsonParams, 'days_to_keep', p_daysToKeep);
+            l_jsonParams := jsonPut(l_jsonParams, 'tabname_master', p_tabNameMaster);                           
+            return server_new_session(l_jsonParams);
         end;
 
         --------------------------------------------------------------------------
         
-        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_groupName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2
+        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_groupName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2 DEFAULT 'REMOTE_LOG') RETURN VARCHAR2
         as
-            l_sonParams VARCHAR2(500);
+            l_sonParams JSON_OBJ_LILAM;
         begin
             l_sonParams := jsonPut(l_sonParams, 'process_name', p_processName);
             l_sonParams := jsonPut(l_sonParams, 'group_name', p_groupName);
@@ -4048,29 +4027,26 @@ dbms_output.put_line('..... json: ' || l_jsonParams);
         
         function handleServerShutdown(p_clientChannel varchar2, p_message varchar2) return boolean
         as
-            l_status    PLS_INTEGER;
-            l_password  varchar2(50);            
-            l_reqJson JSON_OBJECT_T := JSON_OBJECT_T();
-            l_paramsJson JSON_OBJECT_T := JSON_OBJECT_T();
-            l_respMain JSON_OBJECT_T := JSON_OBJECT_T();
-            l_respHeader JSON_OBJECT_T := JSON_OBJECT_T();
+            l_status     PLS_INTEGER;
+            l_password   varchar2(50);            
+            l_paramsJson JSON_OBJ_LILAM;
+            l_respMain   JSON_OBJ_LILAM;
+            l_respHeader JSON_OBJ_LILAM;
         begin
-            l_reqJson := JSON_OBJECT_T.parse(p_message);
-            l_paramsJson := l_reqJson.get_object('params');
-
-            l_password := l_paramsJson.get_string('shutdown_password');
-            l_respHeader.put('msg_type', 'SERVER_RESPONSE');
-    
+            l_paramsJson := jsonObject(p_message, 'params');
+            l_password := jsonString(l_paramsJson, 'shutdown_password');
+                
+            l_respHeader := jsonPut(l_respHeader, 'msg_type', 'SERVER_RESPONSE');
             if l_password = g_shutdownPassword then 
-                l_respHeader.put('status', TXT_ACK_SHUTDOWN);
+                l_respHeader := jsonPut(l_respHeader, 'status', TXT_ACK_SHUTDOWN);
             else
-                 l_respHeader.put('status', TXT_ACK_DECLINE);
+                 l_respHeader := jsonPut(l_respHeader, 'status', TXT_ACK_DECLINE);
             end if ;
     
-            l_respMain.put('header', l_respHeader);
+            l_respMain := jsonPut(l_respMain, 'header', l_respHeader);
             
             DBMS_PIPE.RESET_BUFFER;
-            DBMS_PIPE.PACK_MESSAGE(l_respMain.to_string());        
+            DBMS_PIPE.PACK_MESSAGE(l_respMain);        
             l_status := DBMS_PIPE.SEND_MESSAGE(p_clientChannel, timeout => 1);
             
             if l_status = 0 THEN
@@ -4258,9 +4234,10 @@ dbms_output.put_line('..... json: ' || l_jsonParams);
         
         EXCEPTION
             WHEN OTHERS THEN
-            raise;
-                lilam.error(g_serverProcessId, g_serverPipeName || '=>Failed to parse JSON rules: ' || SQLERRM);
                 rollback;
+                lilam.error(g_serverProcessId, g_serverPipeName || '=>Failed to parse JSON rules: ' || SQLERRM);
+                raise;
+            raise;
         END;
         
         --------------------------------------------------------------------------
@@ -4547,13 +4524,11 @@ dbms_output.put_line('..... json: ' || l_jsonParams);
             LOOP
                 -- Warten auf die nächste Nachricht (Timeout in Sekunden)
                 l_message := receiveMessage(g_serverPipeName);   
-dbms_output.enable();
                 if l_message is not null THEN
                     l_msgCnt := l_msgCnt + 1;
                 BEGIN 
                     l_clientChannel := extractClientChannel(l_message);
                     l_request := extractClientRequest(l_message);
-dbms_output.put_line('Request: ' || l_request);
                     l_shutdownSignal := processRequest(l_request, l_message, l_clientChannel);
                     EXCEPTION
                         WHEN l_stop_server_exception THEN
@@ -4615,7 +4590,7 @@ dbms_output.put_line('Request: ' || l_request);
                 clearServerData;
                 clearAllSessionData(g_serverProcessId);
             end if ;
-    
+                
             DBMS_PIPE.PURGE(g_serverPipeName); 
             l_dummyRes := DBMS_PIPE.REMOVE_PIPE(g_serverPipeName);
             DBMS_PIPE.PURGE(g_serverPipeName || C_INTERLEAVE_PIPE_SUFFIX);
@@ -4653,9 +4628,9 @@ dbms_output.put_line('Request: ' || l_request);
             p_callObject  IN  JSON_OBJECT_T,
             p_respObject  OUT JSON_OBJECT_T
         ) IS
-            l_jsonParams    VARCHAR2(4000);
-            l_jsonHeader    VARCHAR2(1000);
-            l_jsonPayload   VARCHAR2(4000);
+            l_jsonParams    JSON_OBJ_LILAM;
+            l_jsonHeader    JSON_OBJ_LILAM;
+            l_jsonPayload   JSON_OBJ_LILAM;
             l_api_call  VARCHAR2(30);
             l_proc_id NUMBER;
         BEGIN
@@ -4700,7 +4675,6 @@ dbms_output.put_line('Request: ' || l_request);
                     SET_PROCESS_STATUS(l_jsonParams);
                     
                 when 'SET_PROC_STEPS_TODO' THEN
-dbms_output.put_line('--> SET_PROC_STEPS_TODO');
                     SET_PROC_STEPS_TODO(l_jsonParams);
                     
                 when 'SET_PROC_STEPS_DONE' THEN
