@@ -6,24 +6,19 @@ create or replace PACKAGE BODY LILAM AS
      */
      
         ---------------------------------------------------------------
-        -- JSON as VARCHAR2 for max. performance
-        ---------------------------------------------------------------
-        SUBTYPE JSON_OBJ_LILAM IS VARCHAR2(8000);
-
-        ---------------------------------------------------------------
         -- Tuning Parameter for development
         ---------------------------------------------------------------
         
         -- Dedicated to SERVER_LOOP
-        C_SEVER_SYNC_INTERVAL           CONSTANT PLS_INTEGER := 500;
-        C_SERVER_HEARTBEAT_INTERVAL     CONSTANT PLS_INTEGER := 60000;
-        C_SERVER_MAX_LOOPS_IN_TIME      CONSTANT PLS_INTEGER := 1000;
-        C_SERVER_TIMEOUT_WAIT_FOR_MSG   CONSTANT NUMBER      := 0.2; -- Timeout nach Sekunden Warten auf Nachricht
+        C_SEVER_SYNC_INTERVAL           CONSTANT PLS_INTEGER := 500;    -- Max. Time until check dirty flush and update Registry
+        C_SERVER_HEARTBEAT_INTERVAL     CONSTANT PLS_INTEGER := 60000;  -- Update Interval LOG Heartbeat
+        C_SERVER_MAX_LOOPS_IN_TIME      CONSTANT PLS_INTEGER := 1000;   -- Max. number Messages until check dirty flush
+        C_SERVER_TIMEOUT_WAIT_FOR_MSG   CONSTANT NUMBER      := 0.2;    -- Slow down Pipe read
         C_MAX_SERVER_PIPE_SIZE          CONSTANT PLS_INTEGER := 16777216; --  16777216, 67108864 
 
         -- Dedicated to Client
-        C_THROTTLE_LIMIT                CONSTANT PLS_INTEGER := 1000; -- Max logs until unfreeze handshake (depends to C_THROTTLE_INTERVAL)
-        C_THROTTLE_INTERVAL             CONSTANT PLS_INTEGER := 1000; -- Max logs within this interval
+        C_THROTTLE_LIMIT                CONSTANT PLS_INTEGER := 1000; -- Max logs until unfreeze handshake (Quantity)
+        C_THROTTLE_INTERVAL             CONSTANT PLS_INTEGER := 1000; -- Max logs within this interval (Time)
         
         -- general Flush Time-Duration
         C_FLUSH_MILLIS_THRESHOLD        PLS_INTEGER          := 1500;  -- Max. Millis until flush
@@ -1122,7 +1117,7 @@ end if;
     
         --------------------------------------------------------------------------
     
-        function replaceNameDetailTable(p_sqlStatement varchar2, p_placeHolder varchar2, p_tableSuffix varchar2, p_tableName varchar2) return varchar2
+        function replaceNameTable(p_sqlStatement varchar2, p_placeHolder varchar2, p_tableSuffix varchar2, p_tableName varchar2) return varchar2
         as
         begin
             return replace(p_sqlStatement, p_placeHolder, p_tableName || p_tableSuffix);
@@ -1185,7 +1180,7 @@ end if;
                     "ERR_BACKTRACE"     varchar2(4000),
                     "ERR_CALLSTACK"     varchar2(4000)
                 )';
-                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, p_TabNameMaster);
+                sqlStmt := replaceNameTable(sqlStmt, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, p_TabNameMaster);
                 run_sql(sqlStmt);
             end if ;
     
@@ -1205,7 +1200,7 @@ end if;
                     "AVG_MILLIS"    NUMBER(19,0),
                     "ACTION_COUNT"    NUMBER(19,0)
                 )';
-                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_MON_TABLE, C_SUFFIX_MON_TABLE, p_TabNameMaster);
+                sqlStmt := replaceNameTable(sqlStmt, C_PARAM_MON_TABLE, C_SUFFIX_MON_TABLE, p_TabNameMaster);
                 run_sql(sqlStmt);
             end if ;
     
@@ -1276,7 +1271,7 @@ end if;
                 sqlStmt := '
                 CREATE INDEX idx_lilam_LOG_master
                 ON PH_LOG_TABLE (process_id)';
-                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, p_TabNameMaster);
+                sqlStmt := replaceNameTable(sqlStmt, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, p_TabNameMaster);
                 run_sql(sqlStmt);
             end if ;
     
@@ -1284,7 +1279,7 @@ end if;
                 sqlStmt := '
                 CREATE INDEX idx_lilam_mon_master
                 ON PH_MON_TABLE (process_id)';
-                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_MON_TABLE, C_SUFFIX_MON_TABLE, p_TabNameMaster);
+                sqlStmt := replaceNameTable(sqlStmt, C_PARAM_MON_TABLE, C_SUFFIX_MON_TABLE, p_TabNameMaster);
                 run_sql(sqlStmt);
             end if ;
     
@@ -1292,7 +1287,7 @@ end if;
                 sqlStmt := '
                 CREATE INDEX idx_lilam_LOG_info
                 ON PH_LOG_TABLE (info)';
-                sqlStmt := replaceNameDetailTable(sqlStmt, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, p_TabNameMaster);
+                sqlStmt := replaceNameTable(sqlStmt, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, p_TabNameMaster);
                 run_sql(sqlStmt);
             end if ;
     
@@ -1355,11 +1350,11 @@ end if;
                 
                 -- delete Logs and Monitor-entries first (integrity)
                 sqlStatement := 'delete from PH_LOG_TABLE where process_id = :1';
-                sqlStatement := replaceNameDetailTable(sqlStatement, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, sessionRec.tabName_master);
+                sqlStatement := replaceNameTable(sqlStatement, C_PARAM_LOG_TABLE, C_SUFFIX_LOG_TABLE, sessionRec.tabName_master);
                 execute immediate sqlStatement USING processIdToDelete;
         
                 sqlStatement := 'delete from PH_MON_TABLE where process_id = :1';
-                sqlStatement := replaceNameDetailTable(sqlStatement, C_PARAM_MON_TABLE, C_SUFFIX_MON_TABLE, sessionRec.tabName_master);
+                sqlStatement := replaceNameTable(sqlStatement, C_PARAM_MON_TABLE, C_SUFFIX_MON_TABLE, sessionRec.tabName_master);
                 execute immediate sqlStatement USING processIdToDelete;
         
                 -- delete master
@@ -1825,6 +1820,28 @@ end if;
         --------------------------------------------------------------------------
         -- Calculation average time used
         --------------------------------------------------------------------------
+        function calculate_ewma(
+            p_old_avg    number,
+            p_curr_count pls_integer,
+            p_new_value  number,
+            p_warmup     pls_integer default 100, -- Wartezeit bis zum Start
+            p_alpha      number      default 0.1
+        ) return number is
+        begin
+            -- Phase 1: Ignorieren oder Initial-Wert setzen
+            if p_curr_count < p_warmup then
+                return 0; -- Oder p_new_value, falls du einen Startpunkt willst
+            end if;
+        
+            -- Phase 2: Den allerersten echten Wert nach dem Warm-up als Basis setzen
+            if p_curr_count = p_warmup or p_old_avg = 0 or p_old_avg is null then
+                return p_new_value;
+            end if;
+        
+            -- Phase 3: EWMA
+            return (p_new_value * p_alpha) + (p_old_avg * (1 - p_alpha));
+        end;
+
         function calculate_avg(
             p_old_avg    number,
             p_curr_count pls_integer,
@@ -1993,11 +2010,21 @@ end if;
                 l_prev := g_monitor_shadows(v_key);
                 g_monitor_groups(v_key)(l_new_idx).action_count   := l_prev.action_count + 1;
                 g_monitor_groups(v_key)(l_new_idx).used_time       := get_ms_diff(l_prev.start_time, nvl(p_timestamp, systimestamp));
+                
+--calculate_ewma                  
+                g_monitor_groups(v_key)(l_new_idx).avg_action_time := calculate_avg(
+                                                                        l_prev.avg_action_time, 
+                                                                        g_monitor_groups(v_key)(l_new_idx).action_count, 
+                                                                        g_monitor_groups(v_key)(l_new_idx).used_time
+                                                                    );
+/*
                 g_monitor_groups(v_key)(l_new_idx).avg_action_time := calculate_avg(
                                                                         l_prev.avg_action_time, 
                                                                         g_monitor_groups(v_key)(l_new_idx).action_count, 
                                                                         g_monitor_groups(v_key)(l_new_idx).used_time
                                                                       );
+*/
+
             ELSE
                 -- Erster Eintrag der Session/Action
                 g_monitor_groups(v_key)(l_new_idx).action_count   := 1;
@@ -3963,8 +3990,20 @@ end if;
             return -200;
         end;
         --------------------------------------------------------------------------
+
+        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_groupName VARCHAR2, p_logLevel PLS_INTEGER, p_tabNameMaster varchar2 DEFAULT 'REMOTE_LOG') RETURN NUMBER
+        as
+            l_jsonParams JSON_OBJ_LILAM;
+        begin
+            l_jsonParams := jsonPut(l_jsonParams, 'process_name', p_processName);
+            l_jsonParams := jsonPut(l_jsonParams, 'log_level', p_logLevel);
+            l_jsonParams := jsonPut(l_jsonParams, 'tabname_master', p_tabNameMaster);                           
+            return server_new_session(l_jsonParams);
+        end;
+
+        --------------------------------------------------------------------------
         
-        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2 default 'REMOTE_LOG') RETURN VARCHAR2
+        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2 default 'REMOTE_LOG') RETURN NUMBER
         as
             l_jsonParams JSON_OBJ_LILAM;
         begin
@@ -3978,7 +4017,7 @@ end if;
 
         --------------------------------------------------------------------------
         
-        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_groupName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2 DEFAULT 'REMOTE_LOG') RETURN VARCHAR2
+        FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_groupName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2 DEFAULT 'REMOTE_LOG') RETURN NUMBER
         as
             l_sonParams JSON_OBJ_LILAM;
         begin
@@ -4623,22 +4662,29 @@ end if;
         end;
         
         --------------------------------------------------------------------------
-
-        PROCEDURE CALL_BY_JSON (
-            p_callObject  IN  JSON_OBJECT_T,
-            p_respObject  OUT JSON_OBJECT_T
-        ) IS
+        
+        PROCEDURE CALL_BY_JSON(
+            p_callObject  IN  JSON_OBJ_LILAM,
+            p_respObject  OUT JSON_OBJ_LILAM
+        )
+        AS
+            l_jsonHelper    JSON_OBJ_LILAM;
             l_jsonParams    JSON_OBJ_LILAM;
             l_jsonHeader    JSON_OBJ_LILAM;
             l_jsonPayload   JSON_OBJ_LILAM;
             l_api_call  VARCHAR2(30);
-            l_proc_id NUMBER;
+            l_proc_id NUMBER;        
         BEGIN
-            l_api_call   := p_callObject.get_Object('header').get_String('api_call');
-            l_jsonParams := p_callObject.get_Object('params').to_string();
-            
-            l_jsonHeader := jsonPut(l_jsonHeader, 'api_call', l_api_call);
+            if not p_callObject IS JSON then
+                RAISE_APPLICATION_ERROR(-20005, 'In-Parameter is invalid JSON-Format');
+            end if;
+            l_jsonHelper := jsonObject(p_callObject, 'header');
+            l_jsonHeader := jsonPut(l_jsonHeader, 'header', l_jsonHelper);
             l_jsonHeader := jsonPut(l_jsonHeader, 'status', 'UNKNOWN');
+            l_api_call   := jsonString(l_jsonHeader, 'api_call');
+            
+            l_jsonHelper := jsonObject(p_callObject, 'params');
+            l_jsonPayload := jsonPut(l_jsonPayload, 'params', l_jsonHelper);
             l_jsonPayload := jsonPut(l_jsonPayload, 'returns', 'RESPONSE_VALUE');
             l_jsonPayload := jsonPut(l_jsonPayload, 'value', 0);
 
@@ -4709,19 +4755,32 @@ end if;
                     
                     
             END CASE;
-            p_respObject := JSON_OBJECT_T();
-            p_respObject.put('header', JSON_ELEMENT_T.parse(l_jsonHeader));
-            p_respObject.put('payload', JSON_ELEMENT_T.parse(l_jsonPayload));
+
+            p_respObject := jsonPut(p_respObject, 'header', l_jsonHeader);
+            p_respObject := jsonPut(p_respObject, 'payload', l_jsonPayload);
             
             
         EXCEPTION
             WHEN OTHERS THEN
-                p_respObject := JSON_OBJECT_T();
                 l_jsonHeader := jsonPut(l_jsonHeader, 'status', 'ERROR');
                 l_jsonPayload := jsonPut(l_jsonPayload, 'returns', 'ERROR_MSG');
                 l_jsonPayload := jsonPut(l_jsonPayload, 'value', SQLERRM);
-                p_respObject.put('header', JSON_ELEMENT_T.parse(l_jsonHeader));
-                p_respObject.put('payload', JSON_ELEMENT_T.parse(l_jsonPayload));
+            p_respObject := jsonPut(p_respObject, 'header', l_jsonHeader);
+            p_respObject := jsonPut(p_respObject, 'payload', l_jsonPayload);
+        END;
+        
+        PROCEDURE CALL_BY_JSON (
+            p_callObject  IN  JSON_OBJECT_T,
+            p_respObject  OUT JSON_OBJECT_T
+        )
+        AS
+            l_callObject JSON_OBJ_LILAM;
+            l_respObject JSON_OBJ_LILAM;
+        BEGIN
+            p_respObject := JSON_OBJECT_T();
+            l_callObject := p_callObject.to_string();
+            CALL_BY_JSON(l_callObject, l_respObject);
+            p_respObject := JSON_OBJECT_T.parse(l_respObject);
         END;
 
         ------------------------------------------------------------------------
