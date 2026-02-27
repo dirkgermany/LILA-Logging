@@ -2,6 +2,12 @@ create or replace PACKAGE LILAM AS
     /* Complete Doc and last version see https://github.com/dirkgermany/LILA/docs */
 LILAM_VERSION constant varchar2(20) := 'v1.3.0';
 
+    -- =====================================
+    -- JSON as VARCHAR2 for max. performance
+    -- =====================================
+    SUBTYPE JSON_OBJ_LILAM IS VARCHAR2(8000);
+
+
     -- =========
     -- Log Level
     -- =========
@@ -49,7 +55,7 @@ LILAM_VERSION constant varchar2(20) := 'v1.3.0';
         status          PLS_INTEGER,
         info            VARCHAR2(4000),
         proc_immortal   PLS_INTEGER := 0,
-        tab_name_master VARCHAR2(100)
+        tabname_master  VARCHAR2(100)
     );
 
     TYPE t_session_init IS RECORD (
@@ -58,13 +64,14 @@ LILAM_VERSION constant varchar2(20) := 'v1.3.0';
         proc_stepsToDo  PLS_INTEGER,
         daysToKeep      PLS_INTEGER := 100,
         procImmortal    PLS_INTEGER := 0,
-        tab_name_master VARCHAR2(100) DEFAULT 'LILAM_LOG'
+        tabname_master  VARCHAR2(100) DEFAULT 'LILAM_LOG'
     );
 
     -----------------
     -- JSON Interface
     -----------------
     PROCEDURE CALL_BY_JSON(p_callObject  IN  JSON_OBJECT_T, p_respObject  OUT JSON_OBJECT_T);
+    PROCEDURE CALL_BY_JSON(p_callObject  IN  JSON_OBJ_LILAM, p_respObject  OUT JSON_OBJ_LILAM);
 
     ------------------------------
     -- Life cycle of a log session
@@ -74,9 +81,9 @@ LILAM_VERSION constant varchar2(20) := 'v1.3.0';
     FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_daysToKeep NUMBER, p_tabNameMaster VARCHAR2 default 'LILAM_LOG') RETURN NUMBER;
     FUNCTION NEW_SESSION(p_processName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo NUMBER, p_daysToKeep NUMBER, p_tabNameMaster VARCHAR2 DEFAULT 'LILAM_LOG') RETURN NUMBER;
 
-    FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_groupName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2;
-    FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, 
-            p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2) RETURN VARCHAR2;
+    FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_groupName VARCHAR2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2 DEFAULT 'REMOTE_LOG') RETURN NUMBER;
+    FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_groupName VARCHAR2, p_logLevel PLS_INTEGER, p_tabNameMaster varchar2 DEFAULT 'REMOTE_LOG') RETURN NUMBER;
+    FUNCTION SERVER_NEW_SESSION(p_processName varchar2, p_logLevel PLS_INTEGER, p_procStepsToDo PLS_INTEGER, p_daysToKeep PLS_INTEGER, p_tabNameMaster varchar2 DEFAULT 'REMOTE_LOG') RETURN NUMBER;
     PROCEDURE CLOSE_SESSION(p_processId NUMBER);
     PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_processInfo VARCHAR2, p_status PLS_INTEGER);
     PROCEDURE CLOSE_SESSION(p_processId NUMBER, p_procStepsDone NUMBER, p_processInfo VARCHAR2, p_status PLS_INTEGER);
