@@ -341,7 +341,7 @@ create or replace PACKAGE BODY LILAM AS
             l_str varchar2(1000);
         begin
             l_str := p_jsonString;
-            if l_str is null or trim(l_str) = '' then
+            if trim(l_str) is null then
                 return null;
             end if;
             l_str := trim(l_str);
@@ -354,8 +354,43 @@ create or replace PACKAGE BODY LILAM AS
             end if;
             return l_str;
         end;
-        
+
+/*        
         function jsonPut(p_jsonString varchar2, jsonKey varchar2, valueStr varchar2) return varchar2
+        as
+            l_str   varchar2(1000);
+            l_value varchar2(2000) := trim(valueStr);
+            l_isObj boolean;
+        begin
+            if valueStr is null or trim(valueStr) = '' then return p_jsonString; end if;
+            l_isObj := (substr(l_value, 1, 1) = '{' and substr(l_value, -1) = '}');
+
+            if not l_isObj then
+                l_value := replace(l_value, '\', '\\'); -- ZUERST Backslash
+                l_value := replace(l_value, '"', '\"');
+                l_value := replace(l_value, chr(10), '\n');
+                l_value := replace(l_value, chr(13), '\r');
+            end if;
+            
+            l_str := jsonPutPrep(p_jsonString);
+            
+            return case 
+                -- Fall A: Start eines neuen Objekts, das ein verschachteltes Objekt enthält
+                when p_jsonString is null and l_isObj then
+                    '"' || jsonKey || '": ' || l_value
+                else
+                    '{' || l_str || '"' || trim(jsonKey) || '":' || 
+                    case when l_isObj then '' else '"' end || -- Anführungszeichen davor?
+                    l_value || 
+                    case when l_isObj then '' else '"' end || -- Anführungszeichen danach?
+                    '}'
+            end;
+        end;
+*/
+
+        function jsonPut(p_jsonString varchar2, jsonKey varchar2, valueStr varchar2) return varchar2
+        -- Achtung! Die If-Konstruktionen sind nicht schön aber deutlich performanter, als case
+        -- Auch das Arbeiten mit einem booleschen Wert am Anfang macht die Logik um vieles langsamer
         as
             l_str varchar2(1000);
             l_value varchar2(2000) := trim(valueStr);
@@ -389,7 +424,7 @@ create or replace PACKAGE BODY LILAM AS
             end if;
             return l_str;
         end;
-        
+
         function jsonPut(p_jsonString varchar2, jsonKey varchar2, valueNum Number) return varchar2
         as
             l_str varchar2(1000);
@@ -860,17 +895,30 @@ create or replace PACKAGE BODY LILAM AS
             l_groupName     varchar2(50);
             l_serverPipe    varchar2(100);
             l_slotIdx PLS_INTEGER;
+            
+            l_jsonHeader    JSON_OBJ_LILAM;
+            l_jsonPayload   JSON_OBJ_LILAM;
+            l_jsonMain      JSON_OBJ_LILAM;
         begin
             l_clientChannel := getClientPipe;
             l_groupName := jsonString(p_payload, 'group_name');
+            
+--            l_jsonHeader := jsonPut(l_jsonHeader, 'msg_type', 'API_CALL');
+--            l_jsonHeader := jsonPut(l_jsonHeader, 'request', p_request);
+--            l_jsonHeader := jsonPut(l_jsonHeader, 'response', l_clientChannel);
+--            l_jsonPayload := p_payLoad;
+--            l_jsonMain := jsonPut(l_jsonMain, 'header', l_jsonHeader);
+--            l_jsonMain := jsonPut(l_jsonMain, 'payload', l_jsonPayload);
 
             l_header := '"header":{"msg_type":"API_CALL", "request":"' || p_request || '", "response":"' || l_clientChannel ||'"}';
             l_meta  := '"meta":{"param":"value"}';
             l_data  := '"payload":' || p_payLoad;
             l_msgSend := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
+
             l_serverPipe := getServerPipeForSession(p_processId, l_groupName);
             
             DBMS_PIPE.PACK_MESSAGE(l_msgSend);
+--            DBMS_PIPE.PACK_MESSAGE(l_jsonMain);
             l_status := DBMS_PIPE.SEND_MESSAGE(l_serverPipe, timeout => 3);
             l_statusReceive := DBMS_PIPE.RECEIVE_MESSAGE(l_clientChannel, timeout => p_timeoutSec);
             if l_statusReceive = 0 THEN
@@ -1006,17 +1054,27 @@ create or replace PACKAGE BODY LILAM AS
             l_status    PLS_INTEGER;
             l_now           TIMESTAMP := SYSTIMESTAMP;
             l_retryInterval INTERVAL DAY TO SECOND := INTERVAL '30' SECOND;
+            
+            l_jsonHeader  JSON_OBJ_LILAM;
+            l_jsonPayload JSON_OBJ_LILAM;
+            l_jsonMain    JSON_OBJ_LILAM;
         begin
             stabilizeInLowPerfEnvironments(p_processId);
 
+            l_jsonHeader := jsonPut(l_jsonHeader, 'msg_type', 'API_CALL');
+            l_jsonHeader := jsonPut(l_jsonHeader, 'request', p_request);
+            l_jsonPayload := p_payload;
+            l_jsonMain := jsonPut(l_jsonMain, 'header', l_jsonHeader);
+            l_jsonMain := jsonPut(l_jsonMain, 'payload', l_jsonPayload);
             
-            l_header := '"header":{"msg_type":"API_CALL", "request":"' || p_request || '"}';
-            l_data  := '"payload":' || p_payLoad;
-            l_meta  := '"meta":{"param":"value"}';
+--            l_header := '"header":{"msg_type":"API_CALL", "request":"' || p_request || '"}';
+--            l_data  := '"payload":' || p_payLoad;
+--            l_meta  := '"meta":{"param":"value"}';
 
-            l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
+--            l_msg := '{' || l_header || ', ' || l_meta || ', ' || l_data || '}';
+--            DBMS_PIPE.PACK_MESSAGE(l_msg);
             l_pipeName := getServerPipeForSession(p_processId, null);
-            DBMS_PIPE.PACK_MESSAGE(l_msg);
+            DBMS_PIPE.PACK_MESSAGE(l_jsonMain);
             for i in 1 .. 3 loop
                 l_status := DBMS_PIPE.SEND_MESSAGE(l_pipeName, timeout => p_timeoutSec);
                 if l_status = 0 THEN
